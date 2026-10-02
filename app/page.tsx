@@ -1,3 +1,6 @@
+import SanityCheckClient from "@/components/SanityCheckClient";
+import SanityCheckServer from "@/components/SanityCheckServer";
+
 export default function Home() {
   return (
     <div className="flex min-h-full flex-1 flex-col bg-zinc-50 font-sans dark:bg-black">
@@ -45,6 +48,14 @@ export default function Home() {
             The chat panel, model/tier switching, and live feature-flag status
             will be wired in here in the next milestone.
           </p>
+        </section>
+
+        <section className="mt-6 flex w-full max-w-2xl flex-col gap-2 rounded-2xl border border-dashed border-black/[.15] p-6 dark:border-white/[.2]">
+          <h2 className="text-xs font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
+            LaunchDarkly connectivity (temporary — removed once real flags land)
+          </h2>
+          <SanityCheckServer />
+          <SanityCheckClient />
         </section>
       </main>
 
