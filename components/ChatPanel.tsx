@@ -15,7 +15,8 @@ export default function ChatPanel() {
     const trimmed = input.trim();
     if (!trimmed || isLoading) return;
 
-    setMessages((prev) => [...prev, { role: 'user', content: trimmed }]);
+    const nextMessages = [...messages, { role: 'user' as const, content: trimmed }];
+    setMessages(nextMessages);
     setInput('');
     setIsLoading(true);
     setError(null);
@@ -24,7 +25,7 @@ export default function ChatPanel() {
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: trimmed }),
+        body: JSON.stringify({ messages: nextMessages }),
       });
       const data = await response.json();
       if (!response.ok) {

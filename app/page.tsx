@@ -1,6 +1,5 @@
 import ChatPanel from "@/components/ChatPanel";
-import SanityCheckClient from "@/components/SanityCheckClient";
-import SanityCheckServer from "@/components/SanityCheckServer";
+import MemoryStatusBadge from "@/components/MemoryStatusBadge";
 
 export default function Home() {
   return (
@@ -41,19 +40,14 @@ export default function Home() {
             <h2 className="text-sm font-semibold text-black dark:text-zinc-50">
               Chat demo
             </h2>
-            <span className="rounded-full bg-zinc-100 px-2.5 py-1 text-xs font-medium text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400">
-              free tier model
-            </span>
+            <div className="flex items-center gap-2">
+              <MemoryStatusBadge />
+              <span className="rounded-full bg-zinc-100 px-2.5 py-1 text-xs font-medium text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400">
+                free tier model
+              </span>
+            </div>
           </div>
           <ChatPanel />
-        </section>
-
-        <section className="mt-6 flex w-full max-w-2xl flex-col gap-2 rounded-2xl border border-dashed border-black/[.15] p-6 dark:border-white/[.2]">
-          <h2 className="text-xs font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
-            LaunchDarkly connectivity (temporary — removed once real flags land)
-          </h2>
-          <SanityCheckServer />
-          <SanityCheckClient />
         </section>
       </main>
 
