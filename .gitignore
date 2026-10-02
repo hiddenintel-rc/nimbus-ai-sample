@@ -2,6 +2,7 @@
 
 # dependencies
 /node_modules
+/.tools
 /.pnp
 .pnp.*
 .yarn/*
@@ -35,6 +36,9 @@ yarn-error.log*
 
 # vercel
 .vercel
+
+# local tool/session config (not needed to run the project)
+/.claude/
 
 # typescript
 *.tsbuildinfo
