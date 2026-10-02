@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { chatCompletion, DEFAULT_CHAT_MODEL, type ChatMessage } from '@/lib/inference';
 import { getLDClient, anonymousContext } from '@/lib/ld-server';
+import { auth } from '@/lib/auth';
 
 type IncomingMessage = { role: 'user' | 'assistant'; content: string };
 
@@ -20,6 +21,14 @@ function isValidHistory(value: unknown): value is IncomingMessage[] {
 }
 
 export async function POST(request: Request) {
+  const session = await auth();
+  if (!session?.user) {
+    return NextResponse.json(
+      { error: 'You must be logged in to use the chat demo.' },
+      { status: 401 },
+    );
+  }
+
   const body = await request.json().catch(() => null);
   const history = isValidHistory(body?.messages) ? body.messages : null;
 

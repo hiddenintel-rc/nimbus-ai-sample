@@ -1,7 +1,11 @@
 import ChatPanel from "@/components/ChatPanel";
 import MemoryStatusBadge from "@/components/MemoryStatusBadge";
+import { auth } from "@/lib/auth";
+import { logoutAction } from "@/lib/auth-actions";
 
-export default function Home() {
+export default async function Home() {
+  const session = await auth();
+
   return (
     <div className="flex min-h-full flex-1 flex-col bg-zinc-50 font-sans dark:bg-black">
       <header className="flex items-center justify-between px-6 py-5 sm:px-12">
@@ -12,9 +16,20 @@ export default function Home() {
           <a href="#chat" className="hover:text-black dark:hover:text-zinc-50">
             Try it
           </a>
-          <a href="/login" className="hover:text-black dark:hover:text-zinc-50">
-            Log in
-          </a>
+          {session?.user ? (
+            <>
+              <span className="text-zinc-500 dark:text-zinc-500">{session.user.email}</span>
+              <form action={logoutAction}>
+                <button type="submit" className="hover:text-black dark:hover:text-zinc-50">
+                  Log out
+                </button>
+              </form>
+            </>
+          ) : (
+            <a href="/login" className="hover:text-black dark:hover:text-zinc-50">
+              Log in
+            </a>
+          )}
         </nav>
       </header>
 
@@ -40,14 +55,32 @@ export default function Home() {
             <h2 className="text-sm font-semibold text-black dark:text-zinc-50">
               Chat demo
             </h2>
-            <div className="flex items-center gap-2">
-              <MemoryStatusBadge />
-              <span className="rounded-full bg-zinc-100 px-2.5 py-1 text-xs font-medium text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400">
-                free tier model
-              </span>
-            </div>
+            {session?.user && (
+              <div className="flex items-center gap-2">
+                <MemoryStatusBadge />
+                <span className="rounded-full bg-zinc-100 px-2.5 py-1 text-xs font-medium text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400">
+                  free tier model
+                </span>
+              </div>
+            )}
           </div>
-          <ChatPanel />
+          {session?.user ? (
+            <ChatPanel />
+          ) : (
+            <div className="flex flex-col items-start gap-3 py-4">
+              <p className="text-sm text-zinc-500 dark:text-zinc-500">
+                Log in to try the live demo &mdash; this keeps the underlying
+                model available only to signed-in visitors instead of open to
+                anyone on the internet.
+              </p>
+              <a
+                href="/login"
+                className="rounded-lg bg-black px-4 py-2 text-sm font-medium text-white dark:bg-zinc-50 dark:text-black"
+              >
+                Log in
+              </a>
+            </div>
+          )}
         </section>
       </main>
 
