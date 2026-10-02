@@ -1,3 +1,4 @@
+import ChatPanel from "@/components/ChatPanel";
 import SanityCheckClient from "@/components/SanityCheckClient";
 import SanityCheckServer from "@/components/SanityCheckServer";
 
@@ -41,13 +42,10 @@ export default function Home() {
               Chat demo
             </h2>
             <span className="rounded-full bg-zinc-100 px-2.5 py-1 text-xs font-medium text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400">
-              coming online next
+              free tier model
             </span>
           </div>
-          <p className="text-sm text-zinc-500 dark:text-zinc-500">
-            The chat panel, model/tier switching, and live feature-flag status
-            will be wired in here in the next milestone.
-          </p>
+          <ChatPanel />
         </section>
 
         <section className="mt-6 flex w-full max-w-2xl flex-col gap-2 rounded-2xl border border-dashed border-black/[.15] p-6 dark:border-white/[.2]">

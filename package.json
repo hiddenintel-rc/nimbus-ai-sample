@@ -12,6 +12,7 @@
     "@launchdarkly/node-server-sdk": "^9.14.1",
     "launchdarkly-react-client-sdk": "^3.9.4",
     "next": "16.3.8",
+    "openai": "^7.27.0",
     "react": "19.2.8",
     "react-dom": "19.2.8"
   },
