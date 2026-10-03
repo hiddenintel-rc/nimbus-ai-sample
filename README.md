@@ -93,6 +93,37 @@ here.
 
 ---
 
+## Deploying to Vercel
+
+The app is a standard Next.js project — no build changes are needed to put
+it on Vercel. What matters is getting the environment right, since nothing
+above is read from `.env.local` once it's off this machine.
+
+1. **Import the repo** in the Vercel dashboard (or `vercel link` from this
+   directory), framework preset **Next.js**.
+2. **Add every variable from `.env.example`** under Project Settings →
+   Environment Variables (Production, and Preview if you want preview
+   deployments to work too):
+   `LAUNCHDARKLY_SDK_KEY`, `NEXT_PUBLIC_LAUNCHDARKLY_CLIENT_ID`,
+   `AUTH_SECRET`, `DEMO_PASSWORD`, `INFERENCE_PROVIDER`, `GROQ_API_KEY`,
+   `LOCAL_AI_BASE_URL`, `LOCAL_AI_API_KEY`, `CF_ACCESS_CLIENT_ID`,
+   `CF_ACCESS_CLIENT_SECRET`. There's nothing Vercel-specific to add —
+   NextAuth (Auth.js) v5 trusts the host automatically when it detects
+   Vercel's own `VERCEL` environment variable, so no `NEXTAUTH_URL` is
+   needed.
+3. **Deploy.** The home-lab backend behind `LOCAL_AI_BASE_URL` is reached
+   over its public Cloudflare Tunnel hostname with a Service Auth token, the
+   same way it's reached from a local dev server — Vercel's functions are
+   just another caller on the public internet, nothing extra to open up.
+4. **If you're on the Hobby (free) plan**, function duration is capped at
+   60 seconds. `app/api/chat/route.ts` already sets `maxDuration = 60` for
+   this reason, and `generateImage()` in `lib/inference.ts` times out at 55s
+   so a slow upstream fails with a clean error instead of Vercel killing the
+   function mid-request. Image generation took ~50s in local testing, so
+   there's little headroom — an occasional timeout on a slow prompt is
+   expected on Hobby. Raise `maxDuration` (Pro supports up to 300s) if that
+   turns out to be too flaky.
+
 ## Re-creating this independently
 
 Everything below is for setting this up from zero — your own LaunchDarkly

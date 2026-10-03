@@ -13,7 +13,10 @@ import { DEFAULT_TIER_CONFIG, type TierConfig } from '@/lib/tier-config';
 import { AI_CONFIG_KEY, DEFAULT_AI_CONFIG } from '@/lib/ai-config';
 import type { LDAIMetrics } from '@launchdarkly/server-sdk-ai';
 
-export const maxDuration = 300;
+// 60s is the max Vercel allows on the Hobby plan; image generation (~50s in
+// testing) fits under it but with little headroom. Raise this if the project
+// moves to a paid plan.
+export const maxDuration = 60;
 
 type IncomingMessage = { role: 'user' | 'assistant'; content: string };
 

@@ -146,7 +146,10 @@ export async function chatCompletion(
   return { reply, usage, ...(citations.length ? { citations } : {}) };
 }
 
-const IMAGE_TIMEOUT_MS = 240_000;
+// Kept under the 60s Vercel Hobby function limit (see app/api/chat/route.ts's
+// maxDuration) so a slow upstream fails cleanly instead of the platform
+// killing the function mid-request.
+const IMAGE_TIMEOUT_MS = 55_000;
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 
 function localAuthHeaders(): Record<string, string> {
