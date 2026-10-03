@@ -146,10 +146,11 @@ export async function chatCompletion(
   return { reply, usage, ...(citations.length ? { citations } : {}) };
 }
 
-// Kept under the 60s Vercel Hobby function limit (see app/api/chat/route.ts's
-// maxDuration) so a slow upstream fails cleanly instead of the platform
-// killing the function mid-request.
-const IMAGE_TIMEOUT_MS = 55_000;
+// On Vercel, stay under the 60s Hobby function limit (see app/api/chat/route.ts's
+// maxDuration) so a slow upstream fails cleanly instead of the platform killing
+// the function mid-request. Self-hosted has no such cap, so ComfyUI gets room
+// for a cold start.
+const IMAGE_TIMEOUT_MS = process.env.VERCEL ? 55_000 : 240_000;
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 
 function localAuthHeaders(): Record<string, string> {

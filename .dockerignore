@@ -1,0 +1,15 @@
+node_modules
+.next
+.git
+.tools
+.vercel
+.claude
+npm-debug.log*
+.env*
+!.env.example
+Dockerfile
+.dockerignore
+docs
+*.md
+!README.md
+Screenshot*.png

@@ -6,13 +6,12 @@ Flag-gated image generation is implemented and a live call returned a PNG.
 When the toggle is on, that turn's prompt goes to Open WebUI's image API,
 which paints it with ComfyUI and stores the file. Nimbus downloads that
 file and shows it in the thread.
-The app is deployed to Vercel (Hobby plan), live at
-[nimbus-ai-sample.vercel.app](https://nimbus-ai-sample.vercel.app/) — the
-landing page, login, and live flag badges all work there, but chat itself
-doesn't: Cloudflare is blocking Vercel's requests to the home-lab backend
-before they reach Access or Open WebUI (see "Known gaps" below). **Run the
-demo from local dev (`npm run dev`), not the Vercel URL**, until that's
-resolved.
+The app runs in two places on purpose: **self-hosted via Docker alongside the
+model backend**, where everything works, and **Vercel**
+([nimbus-ai-sample.vercel.app](https://nimbus-ai-sample.vercel.app/)), where
+everything except chat works. Both read the same LaunchDarkly environment, so
+one dashboard change moves both. See "Deployments" below for why the split
+exists.
 Third-party integrations are not yet built. This file exists so the build
 can be picked back up, reviewed, or handed off without re-deriving the
 reasoning behind it.
@@ -46,7 +45,8 @@ Three design constraints have shaped every decision below:
 | Web search (Open WebUI + Tavily), all tiers | ✅ Done, tested | `enable-web-search` |
 | Image generation, all tiers | ✅ Done. Prompt routes to Open WebUI's image API; a live call returned a PNG in about 50s | `enable-image-generation` |
 | Third-party integrations | ⏳ Parked, lowest priority — see "Known gaps" | — |
-| Vercel deployment | ⚠️ Deployed, but chat is blocked by Cloudflare — demo from local dev instead. See "Known gaps" | — |
+| Self-hosted deployment (Docker, beside Open WebUI) | ✅ Full functionality — the one to demo from | — |
+| Vercel deployment | ⚠️ Everything but chat; Cloudflare challenges its requests to the backend. Kept as deploy proof. See "Deployments" | — |
 | README setup instructions | ✅ Done | — |
 
 ## Architecture
@@ -250,12 +250,67 @@ next chat reply reflects it, with no redeploy.
 | Model backend switch (self-hosted / Groq) | `lib/inference.ts` |
 | Upgrade click → conversion metric | `components/UpgradeCta.tsx`, `app/api/track-upgrade/route.ts` |
 | Synthetic experiment traffic | `scripts/simulate-experiment.ts` |
+| Self-hosted deployment | `Dockerfile`, `docker-compose.yml`, `next.config.ts` |
 
 The home-lab side of the model backend (Cloudflare Tunnel → Access with a
 Service-Auth-only policy → Open WebUI's API → llama.cpp router serving
 `Qwen3.5-4B`, `Qwen3.5-4B-128k` and `Qwen3-Coder-30B`) is deliberately kept
 out of the diagrams; why it's shaped that way is covered under "Cloudflare
 isolation" below.
+
+## Deployments
+
+Two of them, serving different purposes.
+
+**Self-hosted (Docker, on the same host as Open WebUI) — the working one.**
+The app reaches Open WebUI at its internal address (`http://open-webui:8080/api`
+over a shared Docker network), so the inference call never leaves the host.
+No Cloudflare hop, no Access service token — `CF_ACCESS_*` are blank here,
+and `lib/inference.ts` already only attaches those headers when they're set.
+Only the app itself is published, via a tunnel ingress rule on its own
+hostname. Chat, web search, and image generation all work.
+
+**Vercel — everything except chat.** Every request from Vercel's serverless
+functions to the public backend hostname comes back `403` with Cloudflare's
+"Just a moment..." interstitial: a bot challenge fired at the edge, before
+the request reached the Access Service Auth policy or Open WebUI. Confirmed
+Vercel-specific by isolating the variable — identical requests from local dev,
+same credentials, succeed. The clean fix is a Cloudflare Configuration Rule
+skipping the challenge for just that hostname, but the Rules engine is gated
+behind a paid plan on this zone. The only free lever is a zone-wide toggle,
+which would also drop bot protection from the main Open WebUI hostname — a
+real regression against constraint #2 above, to unblock a demo. An IP
+allowlist isn't an option either: Vercel doesn't give Hobby/Pro tiers a
+static outbound IP.
+
+The Vercel instance is kept rather than deleted because it still demonstrates
+something true: the app builds and deploys cleanly to a standard platform,
+and the flag-driven UI (logo swap, live Memory badge, login gating) works
+there. Only the hop to private infrastructure is blocked, for an external,
+documented reason.
+
+**Both point at the same LaunchDarkly environment.** A flag toggled in the
+dashboard, or the remediation trigger fired, moves both at once. A second LD
+environment would isolate them, but everything behavioral in LaunchDarkly is
+per-environment — targeting rules, individual targets, the experiment, the AI
+Config's targeting, and the trigger URL would all need rebuilding — so one
+shared environment is the deliberate choice.
+
+Self-hosting changes two platform assumptions the Vercel path baked in:
+
+- **`AUTH_TRUST_HOST=true` is required.** Auth.js v5 only infers the host
+  automatically when it detects Vercel's `VERCEL` variable; behind a tunnel it
+  has to be told, or logins fail at the callback.
+- **`NEXT_PUBLIC_LAUNCHDARKLY_CLIENT_ID` is a build-time value.** It's inlined
+  into the browser bundle by `next build`, so the Dockerfile takes it as a
+  build arg. Supplied only at run time, `components/LDClientProvider.tsx`
+  falls through to rendering without `LDProvider` — and its warning is gated
+  behind `NODE_ENV !== 'production'`, so a production container would show no
+  error at all while client-side flags silently stopped working.
+
+`lib/inference.ts` picks its image-generation timeout off the same `VERCEL`
+variable: 55s there to stay under the Hobby plan's 60s function cap, 240s
+self-hosted where no such cap exists and ComfyUI may need a cold start.
 
 ## Key decisions
 
@@ -287,6 +342,15 @@ its own Access application carrying exactly one policy: **Service Auth**, no
 human login path at all. This also respects a rule already documented in the
 operator's own Local AI repo — never tunnel llama.cpp's port directly — since
 this still only ever reaches it through Open WebUI's API.
+
+That dedicated hostname existed so an *externally hosted* app could reach the
+backend. Now that the working deployment runs on the same host and talks to
+Open WebUI internally, the hostname is only load-bearing for the Vercel
+instance — which is precisely the path Cloudflare blocks (see "Deployments").
+It's kept because the Vercel deployment is kept, but the primary deployment no
+longer depends on it. The "never tunnel llama.cpp directly" rule still holds:
+the internal call goes to Open WebUI's API, just over the Docker network
+rather than through the tunnel.
 
 **No database.** Three static demo accounts (`lib/demo-users.ts`) sharing one
 password from `DEMO_PASSWORD` (bcrypt-compared), NextAuth (Auth.js v5)
@@ -401,41 +465,8 @@ usage, success, and duration report back to LaunchDarkly automatically.
 
 ## Known gaps (intentional, not forgotten)
 
-- **Deployed to Vercel, but chat is blocked there — demo from local dev.**
-  Live at [nimbus-ai-sample.vercel.app](https://nimbus-ai-sample.vercel.app/);
-  landing page, login, and the live flag badges all work. Chat does not:
-  every request from Vercel's serverless functions to the home-lab backend
-  gets a `403` back from Cloudflare — the response body is Cloudflare's "Just
-  a moment..." interstitial, meaning Bot Fight Mode (or Super Bot Fight Mode)
-  is challenging the request at the edge, before it ever reaches the Access
-  Service Auth policy or Open WebUI. Confirmed by isolating the variable:
-  identical requests from local dev (same `.env.local`, same credentials)
-  succeed, so this is specifically about how Cloudflare treats traffic
-  *from Vercel's network*, not a credentials or origin problem.
-  The clean fix is a Cloudflare **Configuration Rule** scoped to just
-  `nimbus-api.cu-mediashelf.online` that skips Bot Fight Mode for that one
-  hostname — but Configuration Rules (and Custom Rules) are gated behind a
-  paid Cloudflare plan on this zone. The only free-tier lever is the
-  zone-wide Bot Fight Mode toggle, which was deliberately **not** flipped:
-  it would also drop bot protection from the main Open WebUI hostname, which
-  is a real security regression against the "no security regression"
-  constraint at the top of this document, just to unblock a demo
-  deployment. A proper IP allowlist isn't viable either — Vercel's
-  Hobby/Pro tiers don't provide a static outbound IP to allowlist against;
-  that's an Enterprise-only feature on Vercel's side.
-  **Decision: run the live demo from `npm run dev`, not the Vercel URL**,
-  until either Cloudflare's plan changes or a narrower fix surfaces. The
-  Vercel deployment itself — build, env vars, auth, static assets — is
-  correctly wired and worth keeping as evidence the app deploys cleanly;
-  chat specifically is the one thing it can't do today, for a documented,
-  external, non-code reason. The 60s `maxDuration` cap and matching 55s
-  image-generation timeout (set up in `app/api/chat/route.ts` and
-  `lib/inference.ts` for the Hobby plan) are still in place and still
-  correct, independent of this issue.
-- **Node version isn't pinned for the platform.** `package.json` now declares
-  `"engines": { "node": ">=20" }` so Vercel's build picks a compatible
-  runtime; this didn't exist before since local dev used the project-local
-  `.tools/node` binary instead of relying on `engines`.
+- **Chat can't work on the Vercel deployment** — the cause is external and
+  documented under "Deployments" above. Not fixable in this repo.
 - **Citations depend on undocumented Open WebUI behavior.** Searched replies
   read Open WebUI's top-level `sources` field (not part of the OpenAI schema)
   and rebuild its numbering — unique URL, in order — to make each `[n]` a
