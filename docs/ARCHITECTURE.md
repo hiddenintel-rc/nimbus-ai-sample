@@ -268,8 +268,9 @@ human login path at all. This also respects a rule already documented in the
 operator's own Local AI repo — never tunnel llama.cpp's port directly — since
 this still only ever reaches it through Open WebUI's API.
 
-**No database.** Three static demo accounts (`lib/demo-users.ts`), bcrypt-hashed
-passwords, NextAuth (Auth.js v5) Credentials provider, JWT sessions carrying
+**No database.** Three static demo accounts (`lib/demo-users.ts`) sharing one
+password from `DEMO_PASSWORD` (bcrypt-compared), NextAuth (Auth.js v5)
+Credentials provider, JWT sessions carrying
 `tier` and `accountAgeDays`. A real user table would be pure overhead for a
 demo whose entire job is to show LaunchDarkly concepts — the static list still
 gives real per-account identity for context attributes and individual
@@ -279,13 +280,18 @@ targeting.
 locked down: an ungated chat box on a publicly deployed app is an open
 invitation to flood a home GPU with anonymous requests. `/api/chat` checks
 the session itself and returns `401` — enforcement lives server-side, not in
-whether the UI happens to show a button.
+whether the UI happens to show a button. The demo logins used to be printed
+on the login page and in the README; both were removed, and the shared
+password moved out of the source into `DEMO_PASSWORD` in `.env.local`, which
+reviewers receive privately. A login gate whose password is public in the repo
+gates nothing.
 
 **Individual targeting is downgrade-only, not an upgrade.** The first version
 targeted `demo-free` → Enterprise Tier as a "surprise upgrade" story. That was
-wrong: `demo-free@nimbus.app` / `nimbus-demo` is printed on the public login
-page, so it would have handed out unlimited free access to the most expensive
-model to anyone who found the repo. The override now targets `demo-pro` →
+wrong: the `demo-free` login was printed on the public login page at the
+time, so it would have handed out unlimited free access to the most expensive
+model to anyone who found the repo — and even with the logins now private, a
+widely shared demo account is the wrong one to grant extra access to. The override now targets `demo-pro` →
 Free Tier instead ("stepped down for exceeding fair use") — a realistic
 SaaS pattern that proves individual targeting overrides a rule without ever
 granting more access than a tier's own public documentation already implies.

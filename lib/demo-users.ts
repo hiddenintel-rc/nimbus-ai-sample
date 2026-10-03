@@ -5,35 +5,52 @@ export type Tier = 'free' | 'pro' | 'enterprise';
 export type DemoUser = {
   id: string;
   email: string;
-  passwordHash: string;
   tier: Tier;
   /** Second context attribute, alongside tier, for rule-based targeting. */
   accountAgeDays: number;
 };
 
-// Public demo credentials, intentionally published in the README — there is
-// no real user data behind this app. Every demo account shares one password.
-const DEMO_PASSWORD_HASH = bcrypt.hashSync('nimbus-demo', 10);
+// Every demo account shares one password, read from DEMO_PASSWORD in
+// .env.local and shared privately with reviewers — never committed, so the
+// chat (and the GPU behind it) stays limited to people who were given it.
+let demoPasswordHash: string | null | undefined;
+
+function getDemoPasswordHash(): string | null {
+  if (demoPasswordHash === undefined) {
+    const password = process.env.DEMO_PASSWORD;
+    if (!password) {
+      console.error(
+        '[auth] DEMO_PASSWORD is not set — demo logins are disabled. ' +
+          'Copy .env.example to .env.local and fill it in.',
+      );
+    }
+    demoPasswordHash = password ? bcrypt.hashSync(password, 10) : null;
+  }
+  return demoPasswordHash;
+}
+
+/** False for every password when DEMO_PASSWORD isn't configured. */
+export async function verifyDemoPassword(password: string): Promise<boolean> {
+  const hash = getDemoPasswordHash();
+  return hash ? bcrypt.compare(password, hash) : false;
+}
 
 export const demoUsers: DemoUser[] = [
   {
     id: 'demo-free',
     email: 'demo-free@nimbus.app',
-    passwordHash: DEMO_PASSWORD_HASH,
     tier: 'free',
     accountAgeDays: 12,
   },
   {
     id: 'demo-pro',
     email: 'demo-pro@nimbus.app',
-    passwordHash: DEMO_PASSWORD_HASH,
     tier: 'pro',
     accountAgeDays: 420,
   },
   {
     id: 'demo-enterprise',
     email: 'demo-enterprise@nimbus.app',
-    passwordHash: DEMO_PASSWORD_HASH,
     tier: 'enterprise',
     accountAgeDays: 1100,
   },

@@ -30,17 +30,15 @@ as `package.json`), then:
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) and log in with one of
-the demo accounts below. Keep that `.env.local` private — don't commit it or
+Open [http://localhost:3000](http://localhost:3000) and log in with the
+demo account details you were given alongside the `.env.local` (one Free,
+one Pro, one Enterprise account; they share the password in
+`DEMO_PASSWORD`). Logins aren't published in this repo or on the login
+page, so the chat — and the hardware behind it — stays limited to people
+who were given access. Keep that `.env.local` private — don't commit it or
 forward it on; it's already excluded from git (see `.gitignore`), but that
 only protects you from committing it by accident, not from handing it to
 someone else yourself.
-
-| Email | Password | Tier |
-|---|---|---|
-| `demo-free@nimbus.app` | `nimbus-demo` | Free |
-| `demo-pro@nimbus.app` | `nimbus-demo` | Pro |
-| `demo-enterprise@nimbus.app` | `nimbus-demo` | Enterprise |
 
 **What to try:**
 - Log in as each account and send a message — the reply shows a "served
@@ -135,6 +133,7 @@ Open `.env.local` and fill in:
 | `LAUNCHDARKLY_SDK_KEY` | Your LD project's environment → **Account settings → Projects → (your environment) → SDK key**. Server-side, keep it secret. |
 | `NEXT_PUBLIC_LAUNCHDARKLY_CLIENT_ID` | Same page → **Client-side ID**. Safe to expose in the browser. |
 | `AUTH_SECRET` | Any random string. Generate one with `openssl rand -base64 32`. |
+| `DEMO_PASSWORD` | The shared password for the three demo accounts. Pick your own; logins are disabled until it's set. |
 | `INFERENCE_PROVIDER` | `local` or `groq`. This is a manual switch, not automatic — nothing silently fails over between the two. |
 | `GROQ_API_KEY` | Only needed if `INFERENCE_PROVIDER=groq`. From your Groq account. |
 | `LOCAL_AI_BASE_URL`, `LOCAL_AI_API_KEY` | Only needed if `INFERENCE_PROVIDER=local`. Point `LOCAL_AI_BASE_URL` at your own OpenAI-compatible endpoint (e.g. `https://your-host/api` or `http://localhost:11434/v1`), and `LOCAL_AI_API_KEY` at whatever key/token that server expects. |
@@ -229,7 +228,8 @@ gets.
    upgrading a Free one — see `docs/ARCHITECTURE.md` for why.
 6. Toggle the flag **On**.
 
-**Try it:** log in as each demo account (see the table above) and send a
+**Try it:** log in as each demo account (`demo-free`, `demo-pro`,
+`demo-enterprise` — see `lib/demo-users.ts`) and send a
 message — the reply shows a "served by …" caption naming the actual
 model/config used. `demo-free` and `demo-enterprise` should match their
 tier; `demo-pro` should show **Free**, not Pro, because of the individual
@@ -286,5 +286,6 @@ immediately, with no redeploy.
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) and log in with the
-demo accounts from the table at the top of this README.
+Open [http://localhost:3000](http://localhost:3000) and log in as
+`demo-free@nimbus.app`, `demo-pro@nimbus.app` or
+`demo-enterprise@nimbus.app`, using whatever you set `DEMO_PASSWORD` to.

@@ -12,7 +12,7 @@ export default async function LoginPage({
       <div className="w-full max-w-sm rounded-2xl border border-black/[.08] bg-white p-8 dark:border-white/[.145] dark:bg-zinc-950">
         <h1 className="text-xl font-semibold text-black dark:text-zinc-50">Log in to Nimbus</h1>
         <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-          Use one of the demo accounts below.
+          Sign in with the demo account you were given.
         </p>
 
         {error && (
@@ -43,17 +43,6 @@ export default async function LoginPage({
             Log in
           </button>
         </form>
-
-        <div className="mt-6 text-xs text-zinc-500 dark:text-zinc-500">
-          <p className="font-medium text-zinc-700 dark:text-zinc-300">
-            Demo accounts (password: <code>nimbus-demo</code>):
-          </p>
-          <ul className="mt-1 list-disc pl-4">
-            <li>demo-free@nimbus.app &mdash; Free tier</li>
-            <li>demo-pro@nimbus.app &mdash; Pro tier</li>
-            <li>demo-enterprise@nimbus.app &mdash; Enterprise tier</li>
-          </ul>
-        </div>
       </div>
     </div>
   );

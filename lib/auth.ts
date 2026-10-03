@@ -1,7 +1,6 @@
 import NextAuth from 'next-auth';
 import Credentials from 'next-auth/providers/credentials';
-import bcrypt from 'bcryptjs';
-import { findDemoUser, type Tier } from '@/lib/demo-users';
+import { findDemoUser, verifyDemoPassword, type Tier } from '@/lib/demo-users';
 
 declare module 'next-auth' {
   interface Session {
@@ -32,7 +31,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         const user = findDemoUser(email);
         if (!user) return null;
 
-        const passwordMatches = await bcrypt.compare(password, user.passwordHash);
+        const passwordMatches = await verifyDemoPassword(password);
         if (!passwordMatches) return null;
 
         return {
