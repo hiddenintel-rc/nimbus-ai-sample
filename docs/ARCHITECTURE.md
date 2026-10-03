@@ -6,6 +6,8 @@ Flag-gated image generation is implemented and a live call returned a PNG.
 When the toggle is on, that turn's prompt goes to Open WebUI's image API,
 which paints it with ComfyUI and stores the file. Nimbus downloads that
 file and shows it in the thread.
+The app is deployed to Vercel (Hobby plan), live at
+[nimbus-ai-sample.vercel.app](https://nimbus-ai-sample.vercel.app/).
 Third-party integrations are not yet built. This file exists so the build
 can be picked back up, reviewed, or handed off without re-deriving the
 reasoning behind it.
@@ -39,7 +41,7 @@ Three design constraints have shaped every decision below:
 | Web search (Open WebUI + Tavily), all tiers | ✅ Done, tested | `enable-web-search` |
 | Image generation, all tiers | ✅ Done. Prompt routes to Open WebUI's image API; a live call returned a PNG in about 50s | `enable-image-generation` |
 | Third-party integrations | ⏳ Parked, lowest priority — see "Known gaps" | — |
-| Vercel deployment | ⏳ Prepared (env checklist in README, Hobby-plan timeout handled), not yet deployed | — |
+| Vercel deployment | ✅ Live at [nimbus-ai-sample.vercel.app](https://nimbus-ai-sample.vercel.app/) | — |
 | README setup instructions | ✅ Done | — |
 
 ## Architecture
@@ -394,15 +396,17 @@ usage, success, and duration report back to LaunchDarkly automatically.
 
 ## Known gaps (intentional, not forgotten)
 
-- **Not yet deployed to Vercel.** Everything above has been verified against
-  the local dev server only; see "Deploying to Vercel" in the README for the
-  env-var checklist and the one behavior change it required —
-  `app/api/chat/route.ts`'s `maxDuration` is capped at 60s (Hobby plan's
-  limit) and `generateImage()`'s internal timeout dropped to 55s to match, so
-  a slow image request fails cleanly instead of being killed mid-flight.
-  Image generation ran ~50s locally, so there's little headroom on Hobby;
-  worth watching for timeouts once live, and worth revisiting
-  `maxDuration` if the project ever moves to a paid plan.
+- **Deployed to Vercel, Hobby plan.** Live at
+  [nimbus-ai-sample.vercel.app](https://nimbus-ai-sample.vercel.app/); see
+  "Deploying to Vercel" in the README for the env-var checklist. The one
+  behavior change this required: `app/api/chat/route.ts`'s `maxDuration` is
+  capped at 60s (Hobby's limit) and `generateImage()`'s internal timeout
+  dropped to 55s to match, so a slow image request fails cleanly instead of
+  being killed mid-flight. Image generation ran ~50s locally, so there's
+  little headroom on Hobby — an occasional timeout on a slow prompt is
+  expected, not a bug; worth revisiting `maxDuration` if the project ever
+  moves to a paid plan. Build and deploy both succeeded; full login/chat/
+  image-generation verification against the live URL is still pending.
 - **Node version isn't pinned for the platform.** `package.json` now declares
   `"engines": { "node": ">=20" }` so Vercel's build picks a compatible
   runtime; this didn't exist before since local dev used the project-local

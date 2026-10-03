@@ -79,9 +79,10 @@ didn't set it up yourself.
   is sent to Open WebUI's image API instead of the chat model, and the
   picture is shown in the thread
 
-Not yet built: third-party integrations and a production deployment. See
-`docs/ARCHITECTURE.md` for the full status and the reasoning behind what's
-here.
+Live at [nimbus-ai-sample.vercel.app](https://nimbus-ai-sample.vercel.app/)
+(chat is login-gated — see "Quick start" above for demo credentials). Not yet
+built: third-party integrations. See `docs/ARCHITECTURE.md` for the full
+status and the reasoning behind what's here.
 
 ## Scripts
 
@@ -94,6 +95,10 @@ here.
 ---
 
 ## Deploying to Vercel
+
+This project's own instance is live at
+[nimbus-ai-sample.vercel.app](https://nimbus-ai-sample.vercel.app/). The
+steps below are what it took to get there, if you're setting up your own.
 
 The app is a standard Next.js project — no build changes are needed to put
 it on Vercel. What matters is getting the environment right, since nothing
