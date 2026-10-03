@@ -32,7 +32,7 @@ Three design constraints have shaped every decision below:
 | Targeting (rule-based + individual overrides) | ✅ Done, tested | `chat-tier-config` |
 | Experimentation (metric + experiment on the same flag) | ✅ Done, tested | `chat-tier-config` + `clicked-upgrade` metric |
 | AI Configs (managed prompt/parameter tuning) | ✅ Done, tested | `nimbus-assistant` (AgentControl config, separate from the flags above) |
-| Third-party integrations | ⏳ Not started, lowest priority | — |
+| Third-party integrations | ⏳ Parked, lowest priority — see "Known gaps" | — |
 | Vercel deployment | ⏳ Not started — app only runs locally so far | — |
 | README setup instructions | ✅ Done | — |
 
@@ -233,3 +233,15 @@ usage, success, and duration report back to LaunchDarkly automatically.
   app is considered ready for a public listing.
 - **Groq path is implemented but untested.** It type-checks and follows the
   same interface as the local path, but no live request has gone through it.
+- **Integrations (optional extra credit) parked, not abandoned.** Researched
+  GitHub Code References as the best fit — it would link each flag/config
+  key directly to the exact lines using it in this repo. Found a real
+  constraint before building anything: LaunchDarkly's dashboard-integrated
+  Code References panel is gated to paid plans ("contact Sales to upgrade"),
+  which a trial account won't have. Their docs point to a lighter-weight
+  alternative for Developer/Foundation-tier accounts — a GitHub Action
+  ("Flag Code References in Pull Request") that comments directly on a PR's
+  diff instead of writing into LD's paid dashboard feature. That alternative
+  wasn't evaluated in depth before pausing this. Revisit if the LaunchDarkly
+  plan on the account changes, or if the PR-comment variant turns out to work
+  on the current plan — worth a quick check before writing it off entirely.
