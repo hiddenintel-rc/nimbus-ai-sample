@@ -41,7 +41,7 @@ Three design constraints have shaped every decision below:
 ```mermaid
 flowchart TB
     subgraph Browser["Visitor's browser"]
-        UI["app/page.tsx<br/>ChatPanel + MemoryStatusBadge"]
+        UI["app/page.tsx<br/>BrandLogo + ChatPanel + MemoryStatusBadge"]
         ClientSDK["LaunchDarkly React Client SDK<br/>(LDClientProvider, streaming connection)"]
     end
 
@@ -57,6 +57,7 @@ flowchart TB
 
     subgraph LD["LaunchDarkly (Test environment)"]
         FlagMem["enable-conversation-memory (boolean)"]
+        FlagLogo["new-logo (boolean)"]
         FlagTier["chat-tier-config (JSON, 3 variations)<br/>Default rule = experiment: Free vs Pro"]
         Metric["clicked-upgrade metric"]
         AiConfig["nimbus-assistant AgentControl config<br/>prompt + temperature, all tiers"]
@@ -195,6 +196,7 @@ documents "Node 20+" as an ordinary prerequisite.
 |---|---|---|---|
 | `sanity-check` | boolean | yes | Early connectivity check only; removed from code once real flags landed. Safe to delete from the dashboard. |
 | `enable-conversation-memory` | boolean | yes (needs the live badge) | Release & remediate demo. Gates whether `/api/chat` forwards conversation history or treats every message as stateless. Has a Generic trigger wired to turn it off, for the remediation demo. |
+| `new-logo` | boolean | yes (needs the live swap) | Gates the redesigned cloud + wordmark logo (`components/Logo.tsx`) vs. the original plain text wordmark, via `components/BrandLogo.tsx`. A second, independent example of the release/remediate pattern — applied to a brand/visual rollout instead of a product feature, which is a genuinely common real-world use of flags. Defaults to the new logo if the flag is missing. |
 | `chat-tier-config` | JSON (3 variations: `free` / `pro` / `enterprise`) | no (server-only) | Targeting demo. Each variation is `{ model, maxContextMessages, label }`. Rule-based on the context's `tier` attribute; one individual target (`demo-pro` → `free`, a downgrade). Its Default rule also hosts the experiment below. |
 
 Context sent to LaunchDarkly: `{ kind: "user", key: <demo account id>, email,

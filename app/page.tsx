@@ -1,5 +1,5 @@
+import BrandLogo from "@/components/BrandLogo";
 import ChatPanel from "@/components/ChatPanel";
-import Logo from "@/components/Logo";
 import MemoryStatusBadge from "@/components/MemoryStatusBadge";
 import UpgradeCta from "@/components/UpgradeCta";
 import { auth } from "@/lib/auth";
@@ -11,7 +11,7 @@ export default async function Home() {
   return (
     <div className="flex min-h-full flex-1 flex-col bg-zinc-50 font-sans dark:bg-black">
       <header className="flex items-center justify-between px-6 py-4 sm:px-12">
-        <Logo />
+        <BrandLogo />
         <nav className="flex items-center gap-6 text-sm font-medium text-zinc-600 dark:text-zinc-400">
           <a href="#chat" className="hover:text-black dark:hover:text-zinc-50">
             Try it

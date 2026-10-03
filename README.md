@@ -55,6 +55,10 @@ someone else yourself.
 - The assistant's tone/personality and temperature come from a LaunchDarkly
   AI Config (`nimbus-assistant`), fetched fresh on every message — editing
   the prompt in the LD dashboard changes the very next reply, no redeploy.
+- The logo in the header is gated behind `new-logo` — flip it off in LD and
+  it reverts live to the plain text wordmark, no reload. A second example of
+  the release/remediate pattern, this time for a brand rollout instead of a
+  product feature.
 
 If something doesn't work, jump to "Re-creating this independently" below —
 the same steps explain what each flag is doing, which is useful even if you
@@ -145,8 +149,9 @@ a small/fast model for Free, a larger one for Pro and Enterprise).
 
 ### 3. Re-create the LaunchDarkly flags
 
-This app reads two flags and sends one custom event. All three need to exist
-in your own LD environment — they are not created automatically.
+This app reads three flags and sends one custom event (there's also a
+separate AI Config, covered in step 4). All of these need to exist in your
+own LD environment — they are not created automatically.
 
 #### `sanity-check` (optional)
 
@@ -174,6 +179,21 @@ or treats every message as a fresh start.
 that," then ask "what's my name?" — it should recall it. `curl -X POST
 <your trigger URL>` and ask again in the same browser tab (no reload) — the
 "Memory" badge flips to Off live, and the assistant immediately forgets.
+
+#### `new-logo` — boolean
+
+Gates the redesigned cloud + wordmark logo vs. the original plain text
+wordmark — a second example of the release/remediate pattern, applied to a
+brand rollout instead of a product feature.
+
+1. **Create flag** → Name: `New Logo`, Key: `new-logo` (must match exactly),
+   Type: **Boolean**.
+2. Make sure **"Available on client-side SDKs"** is turned on.
+3. Set the default rule to serve `true`, and toggle the flag **On**.
+
+**Try it:** with the flag on, the header shows the cloud icon above
+"Nimbus." Flip the flag **Off** in the dashboard and watch the same tab (no
+reload) — it reverts instantly to the plain text wordmark.
 
 #### `chat-tier-config` — JSON
 
