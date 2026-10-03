@@ -131,8 +131,11 @@ hop means no service token), and `AUTH_TRUST_HOST=true` is set. Check the
 `networks:` block at the bottom matches the network Open WebUI actually runs
 on — `docker network ls` will tell you.
 
-Then point a hostname at it (e.g. a `proj-nimbus.<domain>` ingress rule on an
-existing Cloudflare Tunnel, forwarding to port 3000).
+The container publishes on `127.0.0.1:3200` — loopback only, so it's reachable
+from outside solely through the tunnel. Point a hostname at it: a
+`proj-nimbus.<domain>` public hostname on an existing Cloudflare Tunnel, service
+type **HTTP**, URL `localhost:3200`. (Plain HTTP is correct — `cloudflared` runs
+on the same host, and TLS terminates at Cloudflare's edge.)
 
 Three things that will bite you if you deploy this by hand instead:
 
