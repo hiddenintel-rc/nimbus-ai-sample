@@ -113,8 +113,16 @@ call never passes through Cloudflare — which is exactly what breaks the
 Vercel deployment (see below).
 
 ```bash
-docker compose up -d --build
+docker compose --env-file .env.local up -d --build
 ```
+
+The `--env-file` is not optional. Compose substitutes `${...}` in the compose
+file from the shell or a `.env` file — *not* from the `env_file:` key, which
+only sets runtime variables inside the container. Without it the LaunchDarkly
+client ID resolves to an empty string and gets baked into the browser bundle
+that way (see gotcha 2 below). The compose file guards against this with a
+`:?` default so it fails with an explanatory error instead of building a
+quietly broken image.
 
 `docker-compose.yml` reads secrets from `.env.local` and overrides three
 values for this environment: `LOCAL_AI_BASE_URL` points at Open WebUI's

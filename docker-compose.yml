@@ -2,15 +2,22 @@
 # the inference call never leaves the host — no Cloudflare hop, no Access
 # service token needed (see "Deployments" in docs/ARCHITECTURE.md).
 #
-# Reads secrets from .env.local. The LaunchDarkly client ID is a build arg, not
-# a runtime variable, because NEXT_PUBLIC_* is inlined at build time.
+# Run it with:
+#   docker compose --env-file .env.local up -d --build
+#
+# The --env-file matters: Compose substitutes ${...} below from the shell or a
+# `.env` file, NOT from the `env_file:` key (which only sets container runtime
+# vars). Without it the client ID resolves to "" and gets baked into the browser
+# bundle empty, silently disabling client-side flags. The `:?` guard below turns
+# that into a startup error instead of a mystery.
 
 services:
   nimbus:
     build:
       context: .
       args:
-        NEXT_PUBLIC_LAUNCHDARKLY_CLIENT_ID: ${NEXT_PUBLIC_LAUNCHDARKLY_CLIENT_ID}
+        # Build-time, not runtime — NEXT_PUBLIC_* is inlined by `next build`.
+        NEXT_PUBLIC_LAUNCHDARKLY_CLIENT_ID: "${NEXT_PUBLIC_LAUNCHDARKLY_CLIENT_ID:?missing - rerun with --env-file .env.local}"
     env_file: .env.local
     environment:
       # Auth.js only auto-trusts the request host on Vercel; behind a tunnel or
