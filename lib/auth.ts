@@ -9,9 +9,12 @@ declare module 'next-auth' {
       id: string;
       email: string;
       tier: Tier;
+      accountAgeDays: number;
     };
   }
 }
+
+type ExtraClaims = { tier: Tier; accountAgeDays: number };
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   session: { strategy: 'jwt' },
@@ -32,20 +35,29 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         const passwordMatches = await bcrypt.compare(password, user.passwordHash);
         if (!passwordMatches) return null;
 
-        return { id: user.id, email: user.email, tier: user.tier };
+        return {
+          id: user.id,
+          email: user.email,
+          tier: user.tier,
+          accountAgeDays: user.accountAgeDays,
+        };
       },
     }),
   ],
   callbacks: {
     async jwt({ token, user }) {
       if (user) {
-        (token as Record<string, unknown>).tier = (user as { tier: Tier }).tier;
+        const claims = token as unknown as ExtraClaims;
+        claims.tier = (user as { tier: Tier }).tier;
+        claims.accountAgeDays = (user as { accountAgeDays: number }).accountAgeDays;
       }
       return token;
     },
     async session({ session, token }) {
+      const claims = token as unknown as ExtraClaims;
       session.user.id = token.sub ?? '';
-      session.user.tier = ((token as Record<string, unknown>).tier as Tier | undefined) ?? 'free';
+      session.user.tier = claims.tier ?? 'free';
+      session.user.accountAgeDays = claims.accountAgeDays ?? 0;
       return session;
     },
   },

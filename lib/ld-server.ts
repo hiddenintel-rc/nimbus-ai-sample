@@ -1,4 +1,5 @@
 import { init, type LDClient, type LDContext } from '@launchdarkly/node-server-sdk';
+import type { Tier } from '@/lib/demo-users';
 
 let clientPromise: Promise<LDClient> | undefined;
 
@@ -24,9 +25,21 @@ export function getLDClient(): Promise<LDClient> {
   return clientPromise;
 }
 
-/** Placeholder context until auth (milestone 5) provides a real logged-in user. */
-export const anonymousContext: LDContext = {
-  kind: 'user',
-  key: 'anonymous-visitor',
-  anonymous: true,
-};
+/**
+ * Builds the LD context for a logged-in demo user. `key` is what individual
+ * targeting matches on; `tier` and `accountAgeDays` drive rule-based targeting.
+ */
+export function buildUserContext(user: {
+  id: string;
+  email: string;
+  tier: Tier;
+  accountAgeDays: number;
+}): LDContext {
+  return {
+    kind: 'user',
+    key: user.id,
+    email: user.email,
+    tier: user.tier,
+    accountAgeDays: user.accountAgeDays,
+  };
+}

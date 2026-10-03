@@ -58,8 +58,8 @@ export default async function Home() {
             {session?.user && (
               <div className="flex items-center gap-2">
                 <MemoryStatusBadge />
-                <span className="rounded-full bg-zinc-100 px-2.5 py-1 text-xs font-medium text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400">
-                  free tier model
+                <span className="rounded-full bg-zinc-100 px-2.5 py-1 text-xs font-medium capitalize text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400">
+                  account: {session.user.tier}
                 </span>
               </div>
             )}

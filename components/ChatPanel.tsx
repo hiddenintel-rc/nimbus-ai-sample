@@ -2,7 +2,8 @@
 
 import { useState, type FormEvent } from 'react';
 
-type Message = { role: 'user' | 'assistant'; content: string };
+type ServedBy = { model: string; label: string };
+type Message = { role: 'user' | 'assistant'; content: string; servedBy?: ServedBy };
 
 export default function ChatPanel() {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -31,7 +32,10 @@ export default function ChatPanel() {
       if (!response.ok) {
         throw new Error(data.error ?? 'Something went wrong.');
       }
-      setMessages((prev) => [...prev, { role: 'assistant', content: data.reply }]);
+      setMessages((prev) => [
+        ...prev,
+        { role: 'assistant', content: data.reply, servedBy: data.servedBy },
+      ]);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong.');
     } finally {
@@ -50,13 +54,22 @@ export default function ChatPanel() {
         {messages.map((message, index) => (
           <div
             key={index}
-            className={
-              message.role === 'user'
-                ? 'self-end rounded-xl bg-black px-3 py-2 text-sm text-white dark:bg-zinc-50 dark:text-black'
-                : 'self-start rounded-xl bg-zinc-100 px-3 py-2 text-sm text-black dark:bg-zinc-900 dark:text-zinc-50'
-            }
+            className={message.role === 'user' ? 'self-end' : 'self-start'}
           >
-            {message.content}
+            <div
+              className={
+                message.role === 'user'
+                  ? 'rounded-xl bg-black px-3 py-2 text-sm text-white dark:bg-zinc-50 dark:text-black'
+                  : 'rounded-xl bg-zinc-100 px-3 py-2 text-sm text-black dark:bg-zinc-900 dark:text-zinc-50'
+              }
+            >
+              {message.content}
+            </div>
+            {message.servedBy && (
+              <p className="mt-1 text-xs text-zinc-400 dark:text-zinc-600">
+                served by {message.servedBy.model} &middot; {message.servedBy.label} config
+              </p>
+            )}
           </div>
         ))}
         {isLoading && (

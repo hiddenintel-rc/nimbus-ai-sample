@@ -5,9 +5,6 @@ export type ChatMessage = {
   content: string;
 };
 
-/** The free-tier router ID on the local stack; used until Part 2 adds tier-based selection. */
-export const DEFAULT_CHAT_MODEL = 'Qwen3.5-4B';
-
 type Provider = 'local' | 'groq';
 
 function getProvider(): Provider {

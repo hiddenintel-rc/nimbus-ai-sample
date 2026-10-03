@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
-import { chatCompletion, DEFAULT_CHAT_MODEL, type ChatMessage } from '@/lib/inference';
-import { getLDClient, anonymousContext } from '@/lib/ld-server';
+import { chatCompletion, type ChatMessage } from '@/lib/inference';
+import { getLDClient, buildUserContext } from '@/lib/ld-server';
 import { auth } from '@/lib/auth';
+import { DEFAULT_TIER_CONFIG, type TierConfig } from '@/lib/tier-config';
 
 type IncomingMessage = { role: 'user' | 'assistant'; content: string };
 
@@ -37,15 +38,22 @@ export async function POST(request: Request) {
   }
 
   const client = await getLDClient();
-  const memoryEnabled = await client.variation(
-    'enable-conversation-memory',
-    anonymousContext,
-    false,
-  );
+  const context = buildUserContext(session.user);
+
+  const memoryEnabled = await client.variation('enable-conversation-memory', context, false);
+  const tierConfig = (await client.variation(
+    'chat-tier-config',
+    context,
+    DEFAULT_TIER_CONFIG,
+  )) as TierConfig;
 
   // With memory off (legacy behavior), only the latest message is sent —
-  // every turn is treated as a fresh conversation, same as before this flag existed.
-  const relevantHistory = memoryEnabled ? history : history.slice(-1);
+  // every turn is treated as a fresh conversation, same as before that flag
+  // existed. With memory on, the tier config's context window caps how much
+  // history this account's plan is allowed to carry.
+  const relevantHistory = memoryEnabled
+    ? history.slice(-tierConfig.maxContextMessages)
+    : history.slice(-1);
 
   const messages: ChatMessage[] = [
     {
@@ -56,8 +64,8 @@ export async function POST(request: Request) {
   ];
 
   try {
-    const reply = await chatCompletion(DEFAULT_CHAT_MODEL, messages);
-    return NextResponse.json({ reply });
+    const reply = await chatCompletion(tierConfig.model, messages);
+    return NextResponse.json({ reply, servedBy: tierConfig });
   } catch (error) {
     console.error('[api/chat]', error);
     return NextResponse.json(

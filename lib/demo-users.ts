@@ -7,6 +7,8 @@ export type DemoUser = {
   email: string;
   passwordHash: string;
   tier: Tier;
+  /** Second context attribute, alongside tier, for rule-based targeting. */
+  accountAgeDays: number;
 };
 
 // Public demo credentials, intentionally published in the README — there is
@@ -19,18 +21,21 @@ export const demoUsers: DemoUser[] = [
     email: 'demo-free@nimbus.app',
     passwordHash: DEMO_PASSWORD_HASH,
     tier: 'free',
+    accountAgeDays: 12,
   },
   {
     id: 'demo-pro',
     email: 'demo-pro@nimbus.app',
     passwordHash: DEMO_PASSWORD_HASH,
     tier: 'pro',
+    accountAgeDays: 420,
   },
   {
     id: 'demo-enterprise',
     email: 'demo-enterprise@nimbus.app',
     passwordHash: DEMO_PASSWORD_HASH,
     tier: 'enterprise',
+    accountAgeDays: 1100,
   },
 ];
 
