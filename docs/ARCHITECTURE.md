@@ -268,7 +268,26 @@ over a shared Docker network), so the inference call never leaves the host.
 No Cloudflare hop, no Access service token — `CF_ACCESS_*` are blank here,
 and `lib/inference.ts` already only attaches those headers when they're set.
 Only the app itself is published, via a tunnel ingress rule on its own
-hostname. Chat, web search, and image generation all work.
+hostname (`proj-nimbus.<domain>`, served over plain HTTP on loopback since
+TLS terminates at Cloudflare's edge). Chat, web search, and image generation
+all work.
+
+That public hostname sits behind its own **Cloudflare Access application**
+with an email-OTP policy scoped to an explicit allowlist, so reviewers are
+added by address rather than anyone with an inbox being able to pass. That
+puts two independent gates in front of the GPU: Access decides who reaches
+the app at all, and the app's own login (`/api/chat` checks the session and
+returns `401`) decides who can send a message. The second one is still the
+one the code enforces — Access is defence in depth, not a replacement for it.
+
+One failure mode worth knowing, because it mimics a backend outage: Access
+intercepts every path, `/api/chat` included. If the Access session expires
+while a page is open, that `fetch` receives Access's HTML login page instead
+of JSON, `response.json()` throws, and the UI shows the generic "chat backend
+is unreachable" message. This is the same shape as the problem described
+under "Cloudflare isolation" below, where Access on an `/api/*` path turned
+Open WebUI's own background requests into redirects. Mitigation is a
+generous Access session duration, and signing in fresh before a demo.
 
 **Vercel — everything except chat.** Every request from Vercel's serverless
 functions to the public backend hostname comes back `403` with Cloudflare's
@@ -369,6 +388,13 @@ on the login page and in the README; both were removed, and the shared
 password moved out of the source into `DEMO_PASSWORD` in `.env.local`, which
 reviewers receive privately. A login gate whose password is public in the repo
 gates nothing.
+
+Once the self-hosted instance became publicly reachable, a second gate went in
+front of it: a Cloudflare Access application on its hostname, email OTP against
+an allowlist (see "Deployments" above). The app-level gate is deliberately kept
+rather than replaced — Access controls who reaches the app, but the tier and
+session logic the demo is actually about still has to be enforced in
+`/api/chat` itself.
 
 **Individual targeting is downgrade-only, not an upgrade.** The first version
 targeted `demo-free` → Enterprise Tier as a "surprise upgrade" story. That was
