@@ -1,3 +1,4 @@
+import Image from "next/image";
 import BrandLogo from "@/components/BrandLogo";
 import ChatPanel from "@/components/ChatPanel";
 import LDUserSync from "@/components/LDUserSync";
@@ -41,6 +42,14 @@ export default async function Home() {
           <span className="rounded-full border border-black/[.08] px-3 py-1 text-xs font-medium text-zinc-600 dark:border-white/[.145] dark:text-zinc-400">
             Now with tiered model access
           </span>
+          <Image
+            src="/nimbus-mark.png"
+            alt="A white cloud with a single lightning bolt"
+            width={1024}
+            height={1024}
+            priority
+            className="hidden h-52 w-52 object-contain dark:block"
+          />
           <h1 className="text-4xl font-semibold leading-tight tracking-tight text-black dark:text-zinc-50 sm:text-5xl">
             An AI assistant that scales with your plan.
           </h1>

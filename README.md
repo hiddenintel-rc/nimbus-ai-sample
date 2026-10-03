@@ -75,6 +75,9 @@ didn't set it up yourself.
 - A LaunchDarkly AI Config managing the assistant's prompt and temperature —
   a separate concern from tier-based model routing, both live-editable with
   no redeploy
+- A flag-gated "Generate an image" toggle. When it's on, that turn's prompt
+  is sent to Open WebUI's image API instead of the chat model, and the
+  picture is shown in the thread
 
 Not yet built: third-party integrations and a production deployment. See
 `docs/ARCHITECTURE.md` for the full status and the reasoning behind what's
@@ -218,6 +221,32 @@ the cited sources are listed under the reply (built from the `sources` field
 Open WebUI returns). Flip the flag **Off** and the toggle
 disappears without a reload — and the server ignores search requests even
 from a stale page, since it re-checks the flag on every message.
+
+#### `enable-image-generation` — boolean
+
+Offers a "Generate an image" toggle in the chat. When it's on, that turn's
+prompt is sent to Open WebUI's image API (`POST /api/v1/images/generations`)
+instead of the chat model. Open WebUI paints it with the local ComfyUI
+setup and Nimbus shows the picture in the thread. Enabled for every tier in
+this demo.
+
+1. **Create flag** → Name: `Enable Image Generation`, Key:
+   `enable-image-generation`, Type: **Boolean**.
+2. Turn on **"Available on client-side SDKs"** — the toggle's visibility
+   reads it live.
+3. Set the default rule to serve `true`, and toggle the flag **On**.
+
+Requires `INFERENCE_PROVIDER=local` and image generation configured in Open
+WebUI (Admin → Settings → Images, engine ComfyUI). On Groq the toggle does
+nothing. If both this toggle and web search are on, the image request wins
+for that turn. If API key endpoint restrictions are on, the key also has to
+be allowed to call `/api/v1/images/generations` and `/api/v1/files` — chat
+completions alone cannot return the picture.
+
+**Try it:** turn the toggle on and describe a picture. The reply shows the
+image with a "generated locally" caption. The first one can take a while —
+the home lab starts the painter and unloads the chat model for that job.
+Flip the flag **Off** and the toggle disappears without a reload.
 
 #### `chat-tier-config` — JSON
 

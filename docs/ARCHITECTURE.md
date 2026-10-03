@@ -1,8 +1,11 @@
 # Architecture & Decisions
 
 Status snapshot as of this document: **release/remediate, targeting,
-experimentation, AI Configs, and flag-gated web search are complete and
-verified end-to-end.** Image generation has its flag but isn't built yet.
+experimentation, AI Configs, and flag-gated web search are complete.**
+Flag-gated image generation is implemented and a live call returned a PNG.
+When the toggle is on, that turn's prompt goes to Open WebUI's image API,
+which paints it with ComfyUI and stores the file. Nimbus downloads that
+file and shows it in the thread.
 Third-party integrations are not yet built. This file exists so the build
 can be picked back up, reviewed, or handed off without re-deriving the
 reasoning behind it.
@@ -34,7 +37,7 @@ Three design constraints have shaped every decision below:
 | Experimentation (metric + experiment on the same flag) | ✅ Done, tested | `chat-tier-config` + `clicked-upgrade` metric |
 | AI Configs (managed prompt/parameter tuning) | ✅ Done, tested | `nimbus-assistant` (AgentControl config, separate from the flags above) |
 | Web search (Open WebUI + Tavily), all tiers | ✅ Done, tested | `enable-web-search` |
-| Image generation, all tiers | ⏳ Flag created, not built yet | `enable-image-generation` |
+| Image generation, all tiers | ✅ Done. Prompt routes to Open WebUI's image API; a live call returned a PNG in about 50s | `enable-image-generation` |
 | Third-party integrations | ⏳ Parked, lowest priority — see "Known gaps" | — |
 | Vercel deployment | ⏳ Not started — app only runs locally so far | — |
 | README setup instructions | ✅ Done | — |
@@ -357,7 +360,7 @@ documents "Node 20+" as an ordinary prerequisite.
 | `enable-conversation-memory` | boolean | yes (needs the live badge) | Release & remediate demo. Gates whether `/api/chat` forwards conversation history or treats every message as stateless. Has a Generic trigger wired to turn it off, for the remediation demo. |
 | `new-logo` | boolean | yes (needs the live swap) | Gates the redesigned cloud + wordmark logo (`components/Logo.tsx`) vs. the original plain text wordmark, via `components/BrandLogo.tsx`. A second, independent example of the release/remediate pattern — applied to a brand/visual rollout instead of a product feature, which is a genuinely common real-world use of flags. Defaults to the new logo if the flag is missing. |
 | `enable-web-search` | boolean | yes (shows/hides the toggle live) | Kill switch + entitlement for web search. `/api/chat` only adds Open WebUI's `features.web_search` when this flag is on for the context, the user's toggle asked for it, and the provider is local — the browser can request search but never force it. Serves `true` to every tier for the demo; a `tier` rule would restrict it in a live product. |
-| `enable-image-generation` | boolean | yes | Created in LaunchDarkly (serves `true` to all tiers); not read by the code yet. |
+| `enable-image-generation` | boolean | yes (shows/hides the toggle live) | Kill switch for image generation. When the flag is on, the user's toggle is on, and the provider is local, `/api/chat` sends that turn's prompt to Open WebUI `POST /api/v1/images/generations` instead of the chat model. The returned file is fetched server-side and shown in the thread. Serves `true` to every tier for the demo. Editing a previous image is not wired yet. |
 | `chat-tier-config` | JSON (3 variations: `free` / `pro` / `enterprise`) | no (server-only) | Targeting demo. Each variation is `{ model, maxContextMessages, label }`. Rule-based on the context's `tier` attribute; one individual target (`demo-pro` → `free`, a downgrade). Its Default rule also hosts the experiment below. |
 
 Context sent to LaunchDarkly: `{ kind: "user", key: <demo account id>, email,
@@ -403,6 +406,7 @@ usage, success, and duration report back to LaunchDarkly automatically.
   markers would be dropped rather than mislinked. Tavily also often returns
   section front pages (e.g. `reuters.com/technology`) rather than articles,
   so some citations link to a site section, not the exact story.
+- **Image generation needs two extra API paths.** Endpoint restrictions stay on. The allowlist is `/api/chat/completions`, `/api/v1/models`, `/api/v1/images/generations`, and `/api/v1/files`. The last two are what let Nimbus ask for a picture and download the stored PNG. A direct call with the prompt "a single red circle on a white background" returned a PNG data URL in about 50 seconds.
 - **Groq path is implemented but untested.** It type-checks and follows the
   same interface as the local path, but no live request has gone through it.
 - **Integrations (optional extra credit) parked, not abandoned.** Researched

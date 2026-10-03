@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import {
   chatCompletion,
+  generateImage,
+  supportsImageGeneration,
   supportsWebSearch,
   type ChatCompletionResult,
   type ChatMessage,
@@ -10,6 +12,8 @@ import { auth } from '@/lib/auth';
 import { DEFAULT_TIER_CONFIG, type TierConfig } from '@/lib/tier-config';
 import { AI_CONFIG_KEY, DEFAULT_AI_CONFIG } from '@/lib/ai-config';
 import type { LDAIMetrics } from '@launchdarkly/server-sdk-ai';
+
+export const maxDuration = 300;
 
 type IncomingMessage = { role: 'user' | 'assistant'; content: string };
 
@@ -60,7 +64,7 @@ export async function POST(request: Request) {
   const client = await getLDClient();
   const context = buildUserContext(session.user);
 
-  // All three flag keys below must exist in your own LaunchDarkly environment —
+  // The flag keys below must exist in your own LaunchDarkly environment —
   // see "Re-create the LaunchDarkly flags" in the README for exact keys,
   // variations, and targeting. The default values passed here only cover
   // LaunchDarkly being briefly unreachable, not a missing/never-created flag.
@@ -71,11 +75,36 @@ export async function POST(request: Request) {
     DEFAULT_TIER_CONFIG,
   )) as TierConfig;
   const webSearchEnabled = await client.variation('enable-web-search', context, false);
+  const imageGenerationEnabled = await client.variation('enable-image-generation', context, false);
 
-  // The browser's toggle is only a request: search runs when the flag allows
-  // it for this account and the backend supports it, never just because the
-  // client asked.
+  // The browser's toggles are only requests. Search and image generation run
+  // when the flag allows them for this account and the backend supports them,
+  // never just because the client asked. An image request takes the turn:
+  // the prompt goes to Open WebUI's image API instead of the chat model.
   const webSearch = webSearchEnabled && body?.webSearch === true && supportsWebSearch();
+  const imageGeneration =
+    imageGenerationEnabled && body?.imageGeneration === true && supportsImageGeneration();
+
+  if (imageGeneration) {
+    const latest = history[history.length - 1];
+    if (!latest || latest.role !== 'user') {
+      return NextResponse.json({ error: 'messages must end with a user prompt' }, { status: 400 });
+    }
+    const prompt = latest.content;
+    try {
+      const image = await generateImage(prompt);
+      return NextResponse.json({
+        reply: 'Generated from your prompt.',
+        images: [{ src: image.dataUrl, alt: prompt }],
+        imageGeneration: true,
+      });
+    } catch (error) {
+      console.error('[api/chat] image', error);
+      const message =
+        error instanceof Error ? error.message : 'Image generation failed. Please try again shortly.';
+      return NextResponse.json({ error: message }, { status: 502 });
+    }
+  }
 
   // AI Config (AgentControl) — a separate concern from chat-tier-config above.
   // This one controls the assistant's prompt/temperature for every account;

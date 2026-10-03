@@ -13,10 +13,14 @@ function getProvider(): Provider {
 }
 
 /**
- * Web search runs inside Open WebUI (its Tavily integration), so it only
- * exists on the local provider — Groq has no equivalent.
+ * Web search and image generation both run inside Open WebUI, so they only
+ * exist on the local provider — Groq has no equivalent.
  */
 export function supportsWebSearch(): boolean {
+  return getProvider() === 'local';
+}
+
+export function supportsImageGeneration(): boolean {
   return getProvider() === 'local';
 }
 
@@ -140,4 +144,109 @@ export async function chatCompletion(
   const citations = params.features?.web_search ? extractCitations(completion) : [];
 
   return { reply, usage, ...(citations.length ? { citations } : {}) };
+}
+
+const IMAGE_TIMEOUT_MS = 240_000;
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+
+function localAuthHeaders(): Record<string, string> {
+  const apiKey = process.env.LOCAL_AI_API_KEY;
+  if (!apiKey) {
+    throw new Error(
+      'LOCAL_AI_API_KEY is not set. Copy .env.example to .env.local and fill it in.',
+    );
+  }
+  const cfClientId = process.env.CF_ACCESS_CLIENT_ID;
+  const cfClientSecret = process.env.CF_ACCESS_CLIENT_SECRET;
+  return {
+    Authorization: `Bearer ${apiKey}`,
+    ...(cfClientId ? { 'CF-Access-Client-Id': cfClientId } : {}),
+    ...(cfClientSecret ? { 'CF-Access-Client-Secret': cfClientSecret } : {}),
+  };
+}
+
+function localBaseUrl(): string {
+  const baseURL = process.env.LOCAL_AI_BASE_URL;
+  if (!baseURL) {
+    throw new Error(
+      'LOCAL_AI_BASE_URL is not set. Copy .env.example to .env.local and fill it in.',
+    );
+  }
+  return baseURL.replace(/\/$/, '');
+}
+
+/** Turn Open WebUI's file path into a URL on the same host as the chat API. */
+export function resolveOpenWebUIUrl(url: string, baseURL: string): string {
+  if (url.startsWith('data:') || /^https?:\/\//i.test(url)) return url;
+  return new URL(url, new URL(baseURL).origin).href;
+}
+
+async function upstreamError(response: Response): Promise<string> {
+  const text = await response.text();
+  try {
+    const body = JSON.parse(text) as { detail?: unknown };
+    if (typeof body.detail === 'string' && body.detail.trim()) return body.detail;
+    if (body.detail && typeof body.detail === 'object' && 'message' in body.detail) {
+      const message = (body.detail as { message?: unknown }).message;
+      if (typeof message === 'string' && message.trim()) return message;
+    }
+  } catch {
+    // Plain text or HTML from the proxy.
+  }
+  const trimmed = text.replace(/\s+/g, ' ').trim();
+  return trimmed.slice(0, 300) || `Image request failed (${response.status}).`;
+}
+
+/**
+ * Sends the user's prompt straight to Open WebUI's image API. The chat
+ * completion `features.image_generation` flag only paints inside a saved
+ * Open WebUI chat (it needs a chat id and a live event stream), so an
+ * external caller has to use this endpoint. Open WebUI then calls ComfyUI
+ * and returns a file URL, which is fetched here and handed back as a data
+ * URL the browser can show without Open WebUI credentials.
+ */
+export async function generateImage(prompt: string): Promise<{ dataUrl: string }> {
+  const baseURL = localBaseUrl();
+  const headers = localAuthHeaders();
+  const created = await fetch(`${baseURL}/v1/images/generations`, {
+    method: 'POST',
+    headers: { ...headers, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt }),
+    signal: AbortSignal.timeout(IMAGE_TIMEOUT_MS),
+  });
+
+  if (!created.ok) {
+    throw new Error(await upstreamError(created));
+  }
+
+  const payload = (await created.json()) as unknown;
+  const first = Array.isArray(payload) ? payload[0] : null;
+  const url = first && typeof first === 'object' ? (first as { url?: unknown }).url : undefined;
+  if (typeof url !== 'string' || !url) {
+    throw new Error('Open WebUI did not return an image.');
+  }
+
+  if (url.startsWith('data:')) {
+    return { dataUrl: url };
+  }
+
+  const file = await fetch(resolveOpenWebUIUrl(url, baseURL), {
+    headers,
+    signal: AbortSignal.timeout(IMAGE_TIMEOUT_MS),
+  });
+  if (!file.ok) {
+    throw new Error(await upstreamError(file));
+  }
+
+  const mediaType = file.headers.get('content-type')?.split(';')[0]?.trim() || 'image/png';
+  if (!mediaType.startsWith('image/')) {
+    throw new Error('Open WebUI returned a file that is not an image.');
+  }
+
+  const bytes = Buffer.from(await file.arrayBuffer());
+  if (bytes.byteLength === 0 || bytes.byteLength > MAX_IMAGE_BYTES) {
+    throw new Error('The generated image was empty or larger than expected.');
+  }
+
+  return { dataUrl: `data:${mediaType};base64,${bytes.toString('base64')}` };
 }
