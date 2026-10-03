@@ -38,61 +38,204 @@ Three design constraints have shaped every decision below:
 
 ## Architecture
 
+Four small diagrams, each answering one question, instead of one diagram
+that tries to show everything. Start with the big picture; the other three
+zoom into one flow each.
+
+Prefer images? Each diagram is also in [`docs/diagrams/`](diagrams/) as a
+white-background PNG, with its title and legend included:
+[overview](diagrams/architecture-1-overview.png) ·
+[chat request](diagrams/architecture-2-chat-request.png) ·
+[tier targeting](diagrams/architecture-3-tier-targeting.png) ·
+[live updates](diagrams/architecture-4-live-updates.png).
+
+**Legend** (used in every flowchart below):
+
 ```mermaid
-flowchart TB
-    subgraph Browser["Visitor's browser"]
-        UI["app/page.tsx<br/>BrandLogo + ChatPanel + MemoryStatusBadge"]
-        ClientSDK["LaunchDarkly React Client SDK<br/>(LDClientProvider, streaming connection)"]
-    end
+flowchart LR
+    accTitle: Diagram legend
+    accDescr: Blue boxes are code in this repo, purple boxes are LaunchDarkly, purple-outlined boxes are values a flag serves, grey boxes are external infrastructure, and dashed boxes are present but inactive by default.
+    A["Nimbus code<br/>(this repo)"]:::nimbus ~~~ B["LaunchDarkly"]:::ld ~~~ V["Flag variation<br/>(served value)"]:::variation ~~~ C["External<br/>infrastructure"]:::ext ~~~ D["Inactive<br/>by default"]:::off
 
-    subgraph App["Next.js app (App Router) — runs locally today, Vercel later"]
-        LoginPage["app/login/page.tsx"]
-        AuthRoute["/api/auth/[...nextauth]<br/>NextAuth (Auth.js v5)"]
-        ChatRoute["/api/chat<br/>session check -> flag eval -> inference call"]
-        TrackRoute["/api/track-upgrade<br/>fires clicked-upgrade metric"]
-        LDServerLib["lib/ld-server.ts<br/>Node Server SDK + context builder"]
-        InferenceLib["lib/inference.ts<br/>provider switch"]
-        DemoUsers["lib/demo-users.ts<br/>3 static accounts, bcrypt hash, tier + accountAgeDays"]
-    end
-
-    subgraph LD["LaunchDarkly (Test environment)"]
-        FlagMem["enable-conversation-memory (boolean)"]
-        FlagLogo["new-logo (boolean)"]
-        FlagTier["chat-tier-config (JSON, 3 variations)<br/>Default rule = experiment: Free vs Pro"]
-        Metric["clicked-upgrade metric"]
-        AiConfig["nimbus-assistant AgentControl config<br/>prompt + temperature, all tiers"]
-    end
-
-    Simulator["scripts/simulate-experiment.ts<br/>synthetic free-tier traffic, run manually"]
-
-    subgraph Home["Operator's home network"]
-        Tunnel["Cloudflare Tunnel"]
-        Access["Cloudflare Access<br/>Service Auth policy only<br/>(dedicated hostname, isolated from the<br/>operator's own human-facing Open WebUI app)"]
-        OWUI["Open WebUI API<br/>(/api/chat/completions)"]
-        Llama["llama.cpp router<br/>Qwen3.5-4B / Qwen3.5-4B-128k / Qwen3-Coder-30B"]
-    end
-
-    Groq["Groq API<br/>(manual opt-in fallback, INFERENCE_PROVIDER=groq, not active)"]
-
-    UI -->|"useFlags(), live, no reload"| ClientSDK
-    ClientSDK -->|"streaming connection"| LD
-    UI --> LoginPage
-    UI -->|"fetch /api/chat"| ChatRoute
-    LoginPage --> AuthRoute
-    ChatRoute --> LDServerLib
-    LDServerLib -->|"evaluate flags + AI Config"| LD
-    ChatRoute --> InferenceLib
-    AuthRoute --> DemoUsers
-    InferenceLib --> Tunnel --> Access --> OWUI --> Llama
-    InferenceLib -.->|"not used by default"| Groq
+    classDef nimbus fill:#2563eb,stroke:#1e3a8a,color:#fff
+    classDef ld fill:#7c3aed,stroke:#4c1d95,color:#fff
+    classDef ext fill:#475569,stroke:#1e293b,color:#fff
+    classDef variation fill:none,stroke:#7c3aed,stroke-width:2px
+    classDef off fill:none,stroke:#94a3b8,stroke-dasharray:5 5
 ```
 
-Two SDKs are deliberately both in play: the **client-side React SDK** powers
-the live "Memory: On/Off" badge (it needs a real browser connection to prove
-the no-reload behavior), while the **server-side Node SDK** makes every
-decision that actually matters for security or cost — which model to call,
-how much conversation history to send — because that logic must not be
-spoofable from the browser.
+### 1. The big picture — who talks to whom
+
+```mermaid
+flowchart TB
+    accTitle: Nimbus system overview
+    accDescr: The operator controls LaunchDarkly from its dashboard. LaunchDarkly streams live flag values to the visitor's browser and flag rules to the Nimbus app, which sends events and metrics back. The browser sends logins and chats to the Nimbus app, which calls a self-hosted model backend; Groq is an inactive fallback.
+
+    Operator(["Operator<br/>LD dashboard · trigger URL"]):::ext
+    LD["LaunchDarkly<br/>flags · AI Config · experiment"]:::ld
+    Visitor["Visitor's browser<br/>landing page · chat · live badges"]:::nimbus
+    App["Nimbus app — Next.js server<br/>auth · flag checks · inference calls"]:::nimbus
+    Models["Self-hosted models<br/>operator's home lab, via Cloudflare Tunnel"]:::ext
+    Groq["Groq API<br/>manual fallback"]:::off
+
+    Operator -->|"edit flags and prompt,<br/>fire kill switch"| LD
+    LD -->|"live flag values,<br/>no page reload"| Visitor
+    LD <-->|"rules stream in,<br/>events and metrics go out"| App
+    Visitor -->|"log in, send a chat"| App
+    App -->|"chat completion with the<br/>model + prompt the flags picked"| Models
+    App -.->|"only if INFERENCE_PROVIDER=groq"| Groq
+
+    classDef nimbus fill:#2563eb,stroke:#1e3a8a,color:#fff
+    classDef ld fill:#7c3aed,stroke:#4c1d95,color:#fff
+    classDef ext fill:#475569,stroke:#1e293b,color:#fff
+    classDef off fill:none,stroke:#94a3b8,stroke-dasharray:5 5
+```
+
+Two LaunchDarkly SDKs are deliberately both in play, with different jobs:
+
+- **Server SDK (inside the Nimbus app)** makes every decision that matters
+  for security or cost — which model to call, how much history to send, which
+  prompt to use. It keeps a streamed copy of the flag rules in memory and
+  evaluates them locally, so a chat request never waits on a round trip to
+  LaunchDarkly; analytics events and AI metrics are sent back in batches.
+- **Client SDK (in the browser)** only drives display: the live "Memory:
+  On/Off" badge and the logo swap. It identifies as the same logged-in user
+  the server evaluates for, but nothing it says is trusted for access
+  decisions — the server re-checks everything itself.
+
+The model backend is a manual switch, not a failover: self-hosted by
+default, Groq only when `INFERENCE_PROVIDER=groq` is set explicitly.
+
+### 2. What happens when you send a chat message
+
+```mermaid
+sequenceDiagram
+    accTitle: Chat request flow
+    accDescr: The browser posts the conversation to /api/chat. The route checks the session, builds a LaunchDarkly context from it, evaluates the memory flag, the tier flag and the AI Config locally, trims the history, calls the model backend, reports AI metrics to LaunchDarkly in the background, and returns the reply with a served-by caption.
+    autonumber
+
+    participant B as Browser<br/>(ChatPanel)
+    participant R as /api/chat<br/>(Nimbus server)
+    participant SDK as LD server SDK<br/>(in-process)
+    participant M as Model backend
+
+    B->>R: POST conversation so far
+    R->>R: Check NextAuth session
+    alt Not logged in
+        R-->>B: 401 — chat is login-only
+    end
+    R->>R: Build context from the session<br/>key · email · tier · accountAgeDays
+    R->>SDK: enable-conversation-memory?
+    SDK-->>R: on / off
+    R->>SDK: chat-tier-config?
+    SDK-->>R: model · maxContextMessages · label
+    R->>SDK: nimbus-assistant AI Config?
+    SDK-->>R: system prompt · temperature
+    R->>R: Trim history<br/>memory off → last message only<br/>memory on → last N for this tier
+    R->>M: Chat completion<br/>(tier's model, AI Config prompt)
+    M-->>R: Reply + token usage
+    R--)SDK: Token, latency, success metrics<br/>(flushed to LaunchDarkly in the background)
+    R-->>B: Reply + "served by" model and tier
+```
+
+Every LaunchDarkly answer above comes from the SDK's in-memory copy of the
+rules, built from the session — never from anything the browser sends. Two
+systems, two jobs: `chat-tier-config` decides *which model and how much
+history* a tier is allowed (access control), while the `nimbus-assistant`
+AI Config decides *how the assistant talks* for everyone (prompt tuning) —
+see "Key decisions" below for why they're kept separate.
+
+### 3. How `chat-tier-config` picks a tier — targeting and the experiment
+
+```mermaid
+flowchart TD
+    accTitle: chat-tier-config evaluation
+    accDescr: LaunchDarkly first checks individual targets, so demo-pro is served Free Tier. Otherwise the tier attribute routes pro to Pro Tier and enterprise to Enterprise Tier. Everyone else reaches the default rule, a 50/50 experiment between Free and Pro. Free-tier users see an Upgrade button whose click is the experiment's conversion metric. A simulator script can generate synthetic traffic into the experiment.
+
+    Ctx["Logged-in user's context"]:::nimbus
+    Sim["simulate-experiment.ts<br/>synthetic free-tier users"]:::nimbus
+    Ind{"Individually targeted?"}:::ld
+    Rule{"tier attribute"}:::ld
+    Exp{"Default rule:<br/>experiment, 50 / 50"}:::ld
+
+    Down["Free Tier<br/>demo-pro, stepped down"]:::variation
+    Pro["Pro Tier"]:::variation
+    Ent["Enterprise Tier"]:::variation
+    Ctrl["Free Tier<br/>control arm"]:::variation
+    Treat["Pro Tier<br/>treatment arm"]:::variation
+    Click["Upgrade to Pro click<br/>/api/track-upgrade"]:::nimbus
+    Metric["clicked-upgrade metric<br/>experiment results"]:::ld
+
+    Ctx --> Ind
+    Ind -->|"yes · key = demo-pro"| Down
+    Ind -->|no| Rule
+    Rule -->|pro| Pro
+    Rule -->|enterprise| Ent
+    Rule -->|"anything else"| Exp
+    Sim -.-> Exp
+    Exp --> Ctrl
+    Exp --> Treat
+    Ctrl & Treat -.->|"free-tier accounts<br/>see the button"| Click
+    Click --> Metric
+
+    classDef nimbus fill:#2563eb,stroke:#1e3a8a,color:#fff
+    classDef ld fill:#7c3aed,stroke:#4c1d95,color:#fff
+    classDef variation fill:none,stroke:#7c3aed,stroke-width:2px
+```
+
+Each outlined box is one of the flag's three JSON variations,
+`{ model, maxContextMessages, label }`. LaunchDarkly checks individual
+targets before rules, which is why `demo-pro` lands on Free despite its
+`pro` tier. Enterprise Tier is deliberately left out of the experiment so
+free-tier traffic can never be randomly routed to the most expensive model.
+
+### 4. Live changes without a redeploy — release and remediate
+
+```mermaid
+sequenceDiagram
+    accTitle: Live flag update flow
+    accDescr: The operator toggles a flag or fires the remediation trigger. LaunchDarkly streams the change to both the browser, whose badge and logo update without a reload, and the Nimbus server, whose very next chat request uses the new value.
+    autonumber
+
+    actor Op as Operator
+    participant LD as LaunchDarkly
+    participant B as Browser<br/>(client SDK)
+    participant S as Nimbus server<br/>(server SDK)
+
+    Note over B,S: Browser identifies as the<br/>logged-in user on page load,<br/>re-identifies on login / logout
+    Op->>LD: Toggle a flag in the dashboard,<br/>or POST the trigger URL (kill switch)
+    par Pushed over open streams
+        LD-)B: New flag values
+        B->>B: Memory badge / logo re-render,<br/>no page reload
+    and
+        LD-)S: New flag rules
+        S->>S: Next chat request uses them<br/>(e.g. memory off → history dropped)
+    end
+```
+
+The same path covers editing the AI Config's prompt or temperature: the
+next chat reply reflects it, with no redeploy.
+
+### Where each piece lives
+
+| Piece | File(s) |
+|---|---|
+| Landing page, header, badges | `app/page.tsx`, `components/BrandLogo.tsx`, `components/MemoryStatusBadge.tsx` |
+| Chat UI | `components/ChatPanel.tsx` |
+| Client SDK setup + user identify | `components/LDClientProvider.tsx`, `components/LDUserSync.tsx`, `app/layout.tsx` |
+| Login (3 static demo accounts) | `app/login/page.tsx`, `lib/auth.ts`, `lib/demo-users.ts` |
+| Chat request handling | `app/api/chat/route.ts` |
+| Server SDK + context builder | `lib/ld-server.ts` |
+| Fallback values if LD is unreachable | `lib/tier-config.ts`, `lib/ai-config.ts` |
+| Model backend switch (self-hosted / Groq) | `lib/inference.ts` |
+| Upgrade click → conversion metric | `components/UpgradeCta.tsx`, `app/api/track-upgrade/route.ts` |
+| Synthetic experiment traffic | `scripts/simulate-experiment.ts` |
+
+The home-lab side of the model backend (Cloudflare Tunnel → Access with a
+Service-Auth-only policy → Open WebUI's API → llama.cpp router serving
+`Qwen3.5-4B`, `Qwen3.5-4B-128k` and `Qwen3-Coder-30B`) is deliberately kept
+out of the diagrams; why it's shaped that way is covered under "Cloudflare
+isolation" below.
 
 ## Key decisions
 
@@ -201,7 +344,9 @@ documents "Node 20+" as an ordinary prerequisite.
 
 Context sent to LaunchDarkly: `{ kind: "user", key: <demo account id>, email,
 tier, accountAgeDays }`, built in `lib/ld-server.ts#buildUserContext` from the
-NextAuth session — never from client input.
+NextAuth session — never from client input. The browser's client SDK is given
+the same server-built context (anonymous when logged out), so live badges
+evaluate for the same user the server does.
 
 **Experiment:** on `chat-tier-config`'s Default rule — Free Tier (control)
 vs. Pro Tier, 50/50, among contexts that reach that rule (i.e. `tier` isn't

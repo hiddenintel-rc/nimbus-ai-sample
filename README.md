@@ -8,7 +8,7 @@ three fixed demo logins.
 
 A deeper look at the architecture and the reasoning behind its design
 decisions lives in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), including
-a diagram.
+diagrams of each data flow.
 
 ## Quick start (you were given a working `.env.local`)
 
