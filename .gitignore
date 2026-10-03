@@ -28,6 +28,9 @@
 # local screenshots (kept for your own reference, not part of the project)
 Screenshot*.png
 
+# personal notes, not part of the project
+/LD-AI-Settings
+
 # debug
 npm-debug.log*
 yarn-debug.log*
