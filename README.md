@@ -134,8 +134,11 @@ on — `docker network ls` will tell you.
 The container publishes on `127.0.0.1:3200` — loopback only, so it's reachable
 from outside solely through the tunnel. Point a hostname at it: a
 `proj-nimbus.<domain>` public hostname on an existing Cloudflare Tunnel, service
-type **HTTP**, URL `localhost:3200`. (Plain HTTP is correct — `cloudflared` runs
-on the same host, and TLS terminates at Cloudflare's edge.)
+type **HTTP**, URL `127.0.0.1:3200`. Plain HTTP is correct — `cloudflared` runs
+on the same host and TLS terminates at Cloudflare's edge. Use the literal IP
+rather than `localhost`: the container binds IPv4 loopback only, so on a host
+where `localhost` also resolves to `::1`, the dialer can try IPv6 first and
+fail.
 
 Three things that will bite you if you deploy this by hand instead:
 
