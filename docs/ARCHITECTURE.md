@@ -7,7 +7,12 @@ When the toggle is on, that turn's prompt goes to Open WebUI's image API,
 which paints it with ComfyUI and stores the file. Nimbus downloads that
 file and shows it in the thread.
 The app is deployed to Vercel (Hobby plan), live at
-[nimbus-ai-sample.vercel.app](https://nimbus-ai-sample.vercel.app/).
+[nimbus-ai-sample.vercel.app](https://nimbus-ai-sample.vercel.app/) — the
+landing page, login, and live flag badges all work there, but chat itself
+doesn't: Cloudflare is blocking Vercel's requests to the home-lab backend
+before they reach Access or Open WebUI (see "Known gaps" below). **Run the
+demo from local dev (`npm run dev`), not the Vercel URL**, until that's
+resolved.
 Third-party integrations are not yet built. This file exists so the build
 can be picked back up, reviewed, or handed off without re-deriving the
 reasoning behind it.
@@ -41,7 +46,7 @@ Three design constraints have shaped every decision below:
 | Web search (Open WebUI + Tavily), all tiers | ✅ Done, tested | `enable-web-search` |
 | Image generation, all tiers | ✅ Done. Prompt routes to Open WebUI's image API; a live call returned a PNG in about 50s | `enable-image-generation` |
 | Third-party integrations | ⏳ Parked, lowest priority — see "Known gaps" | — |
-| Vercel deployment | ✅ Live at [nimbus-ai-sample.vercel.app](https://nimbus-ai-sample.vercel.app/) | — |
+| Vercel deployment | ⚠️ Deployed, but chat is blocked by Cloudflare — demo from local dev instead. See "Known gaps" | — |
 | README setup instructions | ✅ Done | — |
 
 ## Architecture
@@ -396,17 +401,37 @@ usage, success, and duration report back to LaunchDarkly automatically.
 
 ## Known gaps (intentional, not forgotten)
 
-- **Deployed to Vercel, Hobby plan.** Live at
-  [nimbus-ai-sample.vercel.app](https://nimbus-ai-sample.vercel.app/); see
-  "Deploying to Vercel" in the README for the env-var checklist. The one
-  behavior change this required: `app/api/chat/route.ts`'s `maxDuration` is
-  capped at 60s (Hobby's limit) and `generateImage()`'s internal timeout
-  dropped to 55s to match, so a slow image request fails cleanly instead of
-  being killed mid-flight. Image generation ran ~50s locally, so there's
-  little headroom on Hobby — an occasional timeout on a slow prompt is
-  expected, not a bug; worth revisiting `maxDuration` if the project ever
-  moves to a paid plan. Build and deploy both succeeded; full login/chat/
-  image-generation verification against the live URL is still pending.
+- **Deployed to Vercel, but chat is blocked there — demo from local dev.**
+  Live at [nimbus-ai-sample.vercel.app](https://nimbus-ai-sample.vercel.app/);
+  landing page, login, and the live flag badges all work. Chat does not:
+  every request from Vercel's serverless functions to the home-lab backend
+  gets a `403` back from Cloudflare — the response body is Cloudflare's "Just
+  a moment..." interstitial, meaning Bot Fight Mode (or Super Bot Fight Mode)
+  is challenging the request at the edge, before it ever reaches the Access
+  Service Auth policy or Open WebUI. Confirmed by isolating the variable:
+  identical requests from local dev (same `.env.local`, same credentials)
+  succeed, so this is specifically about how Cloudflare treats traffic
+  *from Vercel's network*, not a credentials or origin problem.
+  The clean fix is a Cloudflare **Configuration Rule** scoped to just
+  `nimbus-api.cu-mediashelf.online` that skips Bot Fight Mode for that one
+  hostname — but Configuration Rules (and Custom Rules) are gated behind a
+  paid Cloudflare plan on this zone. The only free-tier lever is the
+  zone-wide Bot Fight Mode toggle, which was deliberately **not** flipped:
+  it would also drop bot protection from the main Open WebUI hostname, which
+  is a real security regression against the "no security regression"
+  constraint at the top of this document, just to unblock a demo
+  deployment. A proper IP allowlist isn't viable either — Vercel's
+  Hobby/Pro tiers don't provide a static outbound IP to allowlist against;
+  that's an Enterprise-only feature on Vercel's side.
+  **Decision: run the live demo from `npm run dev`, not the Vercel URL**,
+  until either Cloudflare's plan changes or a narrower fix surfaces. The
+  Vercel deployment itself — build, env vars, auth, static assets — is
+  correctly wired and worth keeping as evidence the app deploys cleanly;
+  chat specifically is the one thing it can't do today, for a documented,
+  external, non-code reason. The 60s `maxDuration` cap and matching 55s
+  image-generation timeout (set up in `app/api/chat/route.ts` and
+  `lib/inference.ts` for the Hobby plan) are still in place and still
+  correct, independent of this issue.
 - **Node version isn't pinned for the platform.** `package.json` now declares
   `"engines": { "node": ">=20" }` so Vercel's build picks a compatible
   runtime; this didn't exist before since local dev used the project-local

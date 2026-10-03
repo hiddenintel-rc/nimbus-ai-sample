@@ -79,10 +79,13 @@ didn't set it up yourself.
   is sent to Open WebUI's image API instead of the chat model, and the
   picture is shown in the thread
 
-Live at [nimbus-ai-sample.vercel.app](https://nimbus-ai-sample.vercel.app/)
-(chat is login-gated — see "Quick start" above for demo credentials). Not yet
-built: third-party integrations. See `docs/ARCHITECTURE.md` for the full
-status and the reasoning behind what's here.
+Deployed at [nimbus-ai-sample.vercel.app](https://nimbus-ai-sample.vercel.app/)
+— the landing page, login, and live flag badges all work there, but **chat
+doesn't**: Cloudflare blocks Vercel's requests to the home-lab backend before
+they reach it (see "Deploying to Vercel" below). **Run the demo from local
+dev** (`npm run dev`) for now. Not yet built: third-party integrations. See
+`docs/ARCHITECTURE.md` for the full status and the reasoning behind what's
+here.
 
 ## Scripts
 
@@ -97,8 +100,10 @@ status and the reasoning behind what's here.
 ## Deploying to Vercel
 
 This project's own instance is live at
-[nimbus-ai-sample.vercel.app](https://nimbus-ai-sample.vercel.app/). The
-steps below are what it took to get there, if you're setting up your own.
+[nimbus-ai-sample.vercel.app](https://nimbus-ai-sample.vercel.app/), but
+**chat doesn't work there yet** — see step 5 below before you rely on it for
+a demo. The steps below are what it took to get there, if you're setting up
+your own.
 
 The app is a standard Next.js project — no build changes are needed to put
 it on Vercel. What matters is getting the environment right, since nothing
@@ -118,8 +123,9 @@ above is read from `.env.local` once it's off this machine.
    needed.
 3. **Deploy.** The home-lab backend behind `LOCAL_AI_BASE_URL` is reached
    over its public Cloudflare Tunnel hostname with a Service Auth token, the
-   same way it's reached from a local dev server — Vercel's functions are
-   just another caller on the public internet, nothing extra to open up.
+   same way it's reached from a local dev server — in principle, Vercel's
+   functions are just another caller on the public internet. In practice,
+   see step 5.
 4. **If you're on the Hobby (free) plan**, function duration is capped at
    60 seconds. `app/api/chat/route.ts` already sets `maxDuration = 60` for
    this reason, and `generateImage()` in `lib/inference.ts` times out at 55s
@@ -128,6 +134,21 @@ above is read from `.env.local` once it's off this machine.
    there's little headroom — an occasional timeout on a slow prompt is
    expected on Hobby. Raise `maxDuration` (Pro supports up to 300s) if that
    turns out to be too flaky.
+5. **Chat is currently blocked on the deployed instance.** Every chat request
+   from Vercel gets a `403` back from Cloudflare — the body is Cloudflare's
+   "Just a moment..." interstitial, meaning Bot Fight Mode (or Super Bot
+   Fight Mode) is challenging the request at the edge before it reaches the
+   Access Service Auth policy or Open WebUI. Identical requests from local
+   dev succeed with the same credentials, so this is specifically about how
+   Cloudflare treats traffic from Vercel's network. The real fix is a
+   Cloudflare Configuration Rule scoped to the `LOCAL_AI_BASE_URL` hostname
+   that skips Bot Fight Mode for just that hostname — but Configuration
+   Rules (and Custom Rules) are gated behind a paid Cloudflare plan on this
+   zone. The only free-tier lever is the zone-wide Bot Fight Mode toggle,
+   which would also drop bot protection from the main Open WebUI hostname —
+   not worth that trade-off for a demo deployment. **Run the demo from
+   `npm run dev` instead of the deployed URL** until this is resolved. See
+   "Known gaps" in `docs/ARCHITECTURE.md` for the full writeup.
 
 ## Re-creating this independently
 
