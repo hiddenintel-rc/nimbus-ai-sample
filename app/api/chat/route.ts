@@ -115,7 +115,12 @@ export async function POST(request: Request) {
           )
       : await chatCompletion(tierConfig.model, messages, { temperature, webSearch });
 
-    return NextResponse.json({ reply: result.reply, servedBy: tierConfig, webSearch });
+    return NextResponse.json({
+      reply: result.reply,
+      servedBy: tierConfig,
+      webSearch,
+      citations: result.citations ?? [],
+    });
   } catch (error) {
     console.error('[api/chat]', error);
     return NextResponse.json(

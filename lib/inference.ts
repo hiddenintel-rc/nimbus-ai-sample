@@ -66,10 +66,43 @@ function getGroqClient(): OpenAI {
   return groqClient;
 }
 
+/** A numbered web source the reply can cite as `[n]`. */
+export type Citation = { n: number; url: string; title?: string };
+
 export type ChatCompletionResult = {
   reply: string;
   usage?: { promptTokens: number; completionTokens: number; totalTokens: number };
+  citations?: Citation[];
 };
+
+type OpenWebUISource = {
+  source?: { id?: string };
+  document?: unknown[];
+  metadata?: { source?: string; title?: string }[];
+};
+
+/**
+ * Open WebUI returns the search results it gave the model in a top-level
+ * `sources` field (not part of the OpenAI schema). It numbers them for the
+ * model by unique URL, in the order they appear across `metadata` — the same
+ * numbering is rebuilt here so each `[n]` in the reply maps to its URL.
+ */
+export function extractCitations(raw: unknown): Citation[] {
+  const sources = (raw as { sources?: unknown }).sources;
+  if (!Array.isArray(sources)) return [];
+
+  const byKey = new Map<string, Citation>();
+  for (const entry of sources as OpenWebUISource[]) {
+    for (const meta of entry.metadata ?? []) {
+      const key = meta?.source ?? entry.source?.id;
+      if (!key || byKey.has(key)) continue;
+      const n = byKey.size + 1;
+      // Keep the numbering intact, but only hand out links that are plain web URLs.
+      byKey.set(key, { n, url: /^https?:\/\//i.test(key) ? key : '', title: meta?.title });
+    }
+  }
+  return [...byKey.values()].filter((citation) => citation.url);
+}
 
 /** Open WebUI's own extension to the OpenAI request body. */
 type OpenWebUIParams = ChatCompletionCreateParamsNonStreaming & {
@@ -104,5 +137,7 @@ export async function chatCompletion(
       }
     : undefined;
 
-  return { reply, usage };
+  const citations = params.features?.web_search ? extractCitations(completion) : [];
+
+  return { reply, usage, ...(citations.length ? { citations } : {}) };
 }

@@ -2,6 +2,7 @@
 
 import { useState, type FormEvent } from 'react';
 import { useFlags } from 'launchdarkly-react-client-sdk';
+import MessageContent, { type Citation } from '@/components/MessageContent';
 
 type ServedBy = { model: string; label: string };
 type Message = {
@@ -9,6 +10,7 @@ type Message = {
   content: string;
   servedBy?: ServedBy;
   webSearch?: boolean;
+  citations?: Citation[];
 };
 
 export default function ChatPanel() {
@@ -54,6 +56,7 @@ export default function ChatPanel() {
           content: data.reply,
           servedBy: data.servedBy,
           webSearch: data.webSearch,
+          citations: data.citations,
         },
       ]);
     } catch (err) {
@@ -65,7 +68,7 @@ export default function ChatPanel() {
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex max-h-80 flex-col gap-3 overflow-y-auto">
+      <div className="flex max-h-[32rem] flex-col gap-3 overflow-y-auto">
         {messages.length === 0 && (
           <p className="text-sm text-zinc-500 dark:text-zinc-500">
             Ask the assistant something to try it out.
@@ -79,11 +82,20 @@ export default function ChatPanel() {
             <div
               className={
                 message.role === 'user'
-                  ? 'rounded-xl bg-black px-3 py-2 text-sm text-white dark:bg-zinc-50 dark:text-black'
+                  ? 'whitespace-pre-wrap rounded-xl bg-black px-3 py-2 text-sm text-white dark:bg-zinc-50 dark:text-black'
                   : 'rounded-xl bg-zinc-100 px-3 py-2 text-sm text-black dark:bg-zinc-900 dark:text-zinc-50'
               }
             >
-              {message.content}
+              {message.role === 'assistant' ? (
+                // Searched replies always get a (possibly empty) citation list, so
+                // markers without a source are dropped instead of left dangling.
+                <MessageContent
+                  content={message.content}
+                  citations={message.webSearch ? (message.citations ?? []) : undefined}
+                />
+              ) : (
+                message.content
+              )}
             </div>
             {message.servedBy && (
               <p className="mt-1 text-xs text-zinc-400 dark:text-zinc-600">

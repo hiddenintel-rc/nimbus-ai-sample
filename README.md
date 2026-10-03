@@ -213,7 +213,9 @@ Requires `INFERENCE_PROVIDER=local` and web search configured in Open WebUI
 the user that owns `LOCAL_AI_API_KEY`. On Groq the toggle does nothing.
 
 **Try it:** turn the toggle on and ask about something recent; the reply's
-caption adds "searched the web". Flip the flag **Off** and the toggle
+caption adds "searched the web", each `[n]` marker links to its source, and
+the cited sources are listed under the reply (built from the `sources` field
+Open WebUI returns). Flip the flag **Off** and the toggle
 disappears without a reload — and the server ignores search requests even
 from a stale page, since it re-checks the flag on every message.
 

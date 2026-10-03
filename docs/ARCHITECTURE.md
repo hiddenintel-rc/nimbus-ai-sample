@@ -396,14 +396,13 @@ usage, success, and duration report back to LaunchDarkly automatically.
   plan; that got deferred in favor of getting the auth/targeting/inference/
   experimentation wiring solid first, and is intentionally on hold until the
   app is considered ready for a public listing.
-- **Web search sources aren't shown.** Open WebUI runs the search and the
-  model cites results as `[1]`, `[2]`, but the source list goes to Open
-  WebUI's own chat screen over its live (websocket) connection, not into the
-  API response — so Nimbus shows the answer with dangling citation markers
-  and no links. Fix options: strip the markers, or surface sources if a
-  future Open WebUI version returns them in the response.
-- **Replies render as plain text.** The model's Markdown (`**bold**`, lists)
-  shows literally in the chat box.
+- **Citations depend on undocumented Open WebUI behavior.** Searched replies
+  read Open WebUI's top-level `sources` field (not part of the OpenAI schema)
+  and rebuild its numbering — unique URL, in order — to make each `[n]` a
+  link. If a future Open WebUI version changes that field or its numbering,
+  markers would be dropped rather than mislinked. Tavily also often returns
+  section front pages (e.g. `reuters.com/technology`) rather than articles,
+  so some citations link to a site section, not the exact story.
 - **Groq path is implemented but untested.** It type-checks and follows the
   same interface as the local path, but no live request has gone through it.
 - **Integrations (optional extra credit) parked, not abandoned.** Researched
