@@ -156,19 +156,21 @@ Three things that will bite you if you deploy this by hand instead:
    LaunchDarkly directly from each visitor's machine, so that path doesn't
    touch your infrastructure.
 
-Once this is publicly reachable, two things stand between the internet and the
-GPU. The app's own login is the one enforced in code — `/api/chat` checks the
-session and returns `401` regardless of what the UI shows — so `DEMO_PASSWORD`
-should be treated accordingly. In front of that, this deployment also sits
-behind a Cloudflare Access application with an email-OTP policy scoped to an
-allowlist, so reviewers are admitted by address.
+Once this is publicly reachable, the app's own login is what stands between
+the internet and the GPU: `/api/chat` checks the session and returns `401`
+regardless of what the UI shows. `DEMO_PASSWORD` should be chosen and shared
+accordingly — a long random value, given privately, not reused.
 
-Worth knowing if you do the same: Access intercepts every path, `/api/chat`
-included. If its session expires while a page is open, that request gets
-Access's HTML login page instead of JSON and the UI reports the generic "chat
-backend is unreachable" error — a config lapse that looks exactly like an
-outage. Set a generous Access session duration and sign in fresh before a
-demo.
+This deployment also has a Cloudflare Access application on its hostname,
+configured as a regional Bypass policy: traffic from the permitted country
+reaches the app directly, anything else is refused at the edge. The landing
+page is public by design; the chat is not.
+
+If you instead give Access a policy that *requires* authentication, know that
+it intercepts every path, `/api/chat` included — so an expired Access session
+returns its HTML login page where the browser expects JSON, and the UI reports
+the generic "chat backend is unreachable" error. A login lapse that looks
+exactly like an outage. Use a generous session duration if you go that route.
 
 ## Deploying to Vercel
 

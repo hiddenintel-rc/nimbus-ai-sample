@@ -272,22 +272,24 @@ hostname (`proj-nimbus.<domain>`, served over plain HTTP on loopback since
 TLS terminates at Cloudflare's edge). Chat, web search, and image generation
 all work.
 
-That public hostname sits behind its own **Cloudflare Access application**
-with an email-OTP policy scoped to an explicit allowlist, so reviewers are
-added by address rather than anyone with an inbox being able to pass. That
-puts two independent gates in front of the GPU: Access decides who reaches
-the app at all, and the app's own login (`/api/chat` checks the session and
-returns `401`) decides who can send a message. The second one is still the
-one the code enforces — Access is defence in depth, not a replacement for it.
+That public hostname has a **Cloudflare Access application** in front of it,
+but configured as a geographic filter rather than an identity gate: a single
+Bypass policy scoped by country, so requests from the permitted region reach
+the app without an Access login prompt and everything else is refused at the
+edge. The landing page is therefore public; the chat is not. Authentication
+is the app's own — `/api/chat` checks the session and returns `401` — which
+is the arrangement the rest of this document assumes, and the reason that
+check lives in the route rather than in the UI.
 
-One failure mode worth knowing, because it mimics a backend outage: Access
-intercepts every path, `/api/chat` included. If the Access session expires
-while a page is open, that `fetch` receives Access's HTML login page instead
-of JSON, `response.json()` throws, and the UI shows the generic "chat backend
-is unreachable" message. This is the same shape as the problem described
-under "Cloudflare isolation" below, where Access on an `/api/*` path turned
-Open WebUI's own background requests into redirects. Mitigation is a
-generous Access session duration, and signing in fresh before a demo.
+Worth recording because an earlier configuration got this wrong: when the
+same hostname was fronted by an Access policy that *required* authentication,
+Access intercepted every path including `/api/chat`. An expired Access session
+then returned its HTML login page where the browser expected JSON,
+`response.json()` threw, and the UI reported the generic "chat backend is
+unreachable" error — a login lapse wearing the costume of an outage. That is
+the same shape as the problem described under "Cloudflare isolation" below.
+A Bypass policy avoids it, since there is no Access session to expire; an
+identity policy on a hostname serving a JSON API reintroduces it.
 
 **Vercel — everything except chat.** Every request from Vercel's serverless
 functions to the public backend hostname comes back `403` with Cloudflare's
@@ -389,12 +391,12 @@ password moved out of the source into `DEMO_PASSWORD` in `.env.local`, which
 reviewers receive privately. A login gate whose password is public in the repo
 gates nothing.
 
-Once the self-hosted instance became publicly reachable, a second gate went in
-front of it: a Cloudflare Access application on its hostname, email OTP against
-an allowlist (see "Deployments" above). The app-level gate is deliberately kept
-rather than replaced — Access controls who reaches the app, but the tier and
-session logic the demo is actually about still has to be enforced in
-`/api/chat` itself.
+This matters more, not less, now that the self-hosted instance is publicly
+reachable and its Cloudflare Access application is configured as a regional
+filter rather than an identity gate (see "Deployments" above). The landing
+page is deliberately open — someone should be able to see what this is
+without credentials — while every path that reaches a model is gated in the
+route itself. A gate that lives in the UI would be no gate at all here.
 
 **Individual targeting is downgrade-only, not an upgrade.** The first version
 targeted `demo-free` → Enterprise Tier as a "surprise upgrade" story. That was
