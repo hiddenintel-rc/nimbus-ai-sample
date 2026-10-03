@@ -79,11 +79,19 @@ didn't set it up yourself.
   is sent to Open WebUI's image API instead of the chat model, and the
   picture is shown in the thread
 
-Deployed at [nimbus-ai-sample.vercel.app](https://nimbus-ai-sample.vercel.app/)
-— the landing page, login, and live flag badges all work there, but **chat
-doesn't**: Cloudflare blocks Vercel's requests to the home-lab backend before
-they reach it (see "Deploying to Vercel" below). **Run the demo from local
-dev** (`npm run dev`) for now. Not yet built: third-party integrations. See
+There are two deployments, on purpose:
+
+- **Self-hosted** (Docker, alongside the model backend) — the fully working
+  one. Chat, web search, and image generation all function, because the
+  inference call never leaves the host. See "Self-hosting with Docker" below.
+- **[nimbus-ai-sample.vercel.app](https://nimbus-ai-sample.vercel.app/)** —
+  the landing page, login, and live flag badges work, but **chat doesn't**:
+  Cloudflare challenges Vercel's requests to the backend before they arrive.
+  Kept as proof the app deploys cleanly to a standard platform. See
+  "Deploying to Vercel" below.
+
+Both point at the same LaunchDarkly environment, so a flag flipped in the
+dashboard changes both at once. Not yet built: third-party integrations. See
 `docs/ARCHITECTURE.md` for the full status and the reasoning behind what's
 here.
 
@@ -97,13 +105,56 @@ here.
 
 ---
 
+## Self-hosting with Docker
+
+This is the deployment where everything works. The app runs on the same host
+as Open WebUI and reaches it over the local Docker network, so the inference
+call never passes through Cloudflare — which is exactly what breaks the
+Vercel deployment (see below).
+
+```bash
+docker compose up -d --build
+```
+
+`docker-compose.yml` reads secrets from `.env.local` and overrides three
+values for this environment: `LOCAL_AI_BASE_URL` points at Open WebUI's
+internal address, the two `CF_ACCESS_*` variables are blanked (no Cloudflare
+hop means no service token), and `AUTH_TRUST_HOST=true` is set. Check the
+`networks:` block at the bottom matches the network Open WebUI actually runs
+on — `docker network ls` will tell you.
+
+Then point a hostname at it (e.g. a `proj-nimbus.<domain>` ingress rule on an
+existing Cloudflare Tunnel, forwarding to port 3000).
+
+Three things that will bite you if you deploy this by hand instead:
+
+1. **`AUTH_TRUST_HOST=true` is required.** Auth.js v5 only trusts the request
+   host automatically on Vercel. Behind a tunnel or reverse proxy without
+   this, logins fail at the callback with a confusing host error.
+2. **`NEXT_PUBLIC_LAUNCHDARKLY_CLIENT_ID` must be set at *build* time**, not
+   run time — `NEXT_PUBLIC_*` values are inlined into the browser bundle by
+   `next build`. The Dockerfile takes it as a build arg for this reason. Pass
+   it only at `docker run` and the client SDK is silently disabled: no error,
+   no warning in production, just a Memory badge and logo swap that never
+   respond to flag changes while server-side flags keep working fine.
+3. **The host needs outbound HTTPS to `*.launchdarkly.com`** for the server
+   SDK's flag stream and event flush. The browser's client SDK connects to
+   LaunchDarkly directly from each visitor's machine, so that path doesn't
+   touch your infrastructure.
+
+Chat is login-gated and enforced server-side, so the demo accounts are what
+stand between the internet and the GPU once this is publicly reachable —
+`DEMO_PASSWORD` should be treated accordingly.
+
 ## Deploying to Vercel
 
 This project's own instance is live at
 [nimbus-ai-sample.vercel.app](https://nimbus-ai-sample.vercel.app/), but
-**chat doesn't work there yet** — see step 5 below before you rely on it for
-a demo. The steps below are what it took to get there, if you're setting up
-your own.
+**chat doesn't work there** — see step 5. It's kept as evidence the app
+deploys cleanly to a standard platform, and the flag-driven parts of the UI
+(logo swap, live Memory badge, login) do work there. For a working chat demo,
+self-host it instead (above). The steps below are what it took to get here,
+if you're setting up your own.
 
 The app is a standard Next.js project — no build changes are needed to put
 it on Vercel. What matters is getting the environment right, since nothing
@@ -146,8 +197,9 @@ above is read from `.env.local` once it's off this machine.
    Rules (and Custom Rules) are gated behind a paid Cloudflare plan on this
    zone. The only free-tier lever is the zone-wide Bot Fight Mode toggle,
    which would also drop bot protection from the main Open WebUI hostname —
-   not worth that trade-off for a demo deployment. **Run the demo from
-   `npm run dev` instead of the deployed URL** until this is resolved. See
+   not worth that trade-off for a demo deployment. **Self-host it (above) for
+   a working chat demo** — running alongside Open WebUI sidesteps this
+   entirely, since the inference call stops being internet traffic. See
    "Known gaps" in `docs/ARCHITECTURE.md` for the full writeup.
 
 ## Re-creating this independently
@@ -191,13 +243,14 @@ Open `.env.local` and fill in:
 | Variable | Where it comes from |
 |---|---|
 | `LAUNCHDARKLY_SDK_KEY` | Your LD project's environment → **Account settings → Projects → (your environment) → SDK key**. Server-side, keep it secret. |
-| `NEXT_PUBLIC_LAUNCHDARKLY_CLIENT_ID` | Same page → **Client-side ID**. Safe to expose in the browser. |
+| `NEXT_PUBLIC_LAUNCHDARKLY_CLIENT_ID` | Same page → **Client-side ID**. Safe to expose in the browser. Note it's read at *build* time, not run time — see "Self-hosting with Docker". |
 | `AUTH_SECRET` | Any random string. Generate one with `openssl rand -base64 32`. |
+| `AUTH_TRUST_HOST` | Set to `true` only when serving from a custom domain behind a proxy/tunnel. Not needed for local dev or Vercel. |
 | `DEMO_PASSWORD` | The shared password for the three demo accounts. Pick your own; logins are disabled until it's set. |
 | `INFERENCE_PROVIDER` | `local` or `groq`. This is a manual switch, not automatic — nothing silently fails over between the two. |
 | `GROQ_API_KEY` | Only needed if `INFERENCE_PROVIDER=groq`. From your Groq account. |
-| `LOCAL_AI_BASE_URL`, `LOCAL_AI_API_KEY` | Only needed if `INFERENCE_PROVIDER=local`. Point `LOCAL_AI_BASE_URL` at your own OpenAI-compatible endpoint (e.g. `https://your-host/api` or `http://localhost:11434/v1`), and `LOCAL_AI_API_KEY` at whatever key/token that server expects. |
-| `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET` | Only needed if your `local` endpoint sits behind Cloudflare Access with a Service Auth policy. Leave blank otherwise. |
+| `LOCAL_AI_BASE_URL`, `LOCAL_AI_API_KEY` | Only needed if `INFERENCE_PROVIDER=local`. Point `LOCAL_AI_BASE_URL` at your own OpenAI-compatible endpoint — its internal address if you're running alongside it (e.g. `http://open-webui:8080/api`), or a public hostname otherwise — and `LOCAL_AI_API_KEY` at whatever key/token that server expects. |
+| `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET` | Only needed if your `local` endpoint sits behind Cloudflare Access with a Service Auth policy. Leave blank otherwise, including when reaching it internally. |
 
 **If you're using Groq:** the model names baked into this repo's flag
 variations (below) are specific to a particular self-hosted setup and won't

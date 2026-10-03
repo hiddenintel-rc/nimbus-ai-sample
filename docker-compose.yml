@@ -1,0 +1,35 @@
+# Self-hosted deployment. Reaches Open WebUI over the local Docker network, so
+# the inference call never leaves the host — no Cloudflare hop, no Access
+# service token needed (see "Deployments" in docs/ARCHITECTURE.md).
+#
+# Reads secrets from .env.local. The LaunchDarkly client ID is a build arg, not
+# a runtime variable, because NEXT_PUBLIC_* is inlined at build time.
+
+services:
+  nimbus:
+    build:
+      context: .
+      args:
+        NEXT_PUBLIC_LAUNCHDARKLY_CLIENT_ID: ${NEXT_PUBLIC_LAUNCHDARKLY_CLIENT_ID}
+    env_file: .env.local
+    environment:
+      # Auth.js only auto-trusts the request host on Vercel; behind a tunnel or
+      # reverse proxy it has to be told explicitly, or logins fail on callback.
+      AUTH_TRUST_HOST: "true"
+      # Open WebUI on the shared network below — not the public tunnel hostname.
+      LOCAL_AI_BASE_URL: http://open-webui:8080/api
+      # Blank: the Access service token is only for the public hostname.
+      CF_ACCESS_CLIENT_ID: ""
+      CF_ACCESS_CLIENT_SECRET: ""
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+    networks:
+      - openwebui
+
+networks:
+  # The network Open WebUI already runs on. Check the exact name with
+  # `docker network ls`; it's usually <its-compose-project>_default.
+  openwebui:
+    external: true
+    name: open-webui_default
