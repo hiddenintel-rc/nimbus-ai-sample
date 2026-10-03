@@ -85,7 +85,7 @@ export default async function Home() {
       </main>
 
       <footer className="px-6 py-8 text-center text-xs text-zinc-400 sm:px-12">
-        Demo application built for the LaunchDarkly SE technical exercise.
+        Nimbus is an independent demo project, not a real product &mdash; built with LaunchDarkly for feature flags and experimentation.
       </footer>
     </div>
   );

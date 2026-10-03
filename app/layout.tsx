@@ -16,7 +16,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Nimbus — AI chat that scales with your plan",
   description:
-    "Demo SaaS app for the LaunchDarkly SE technical exercise: tiered AI chat with feature flags, targeting, experimentation, and AI Configs.",
+    "Nimbus is a demo project exploring tiered AI chat access, powered by LaunchDarkly for feature flags, targeting, and experimentation.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

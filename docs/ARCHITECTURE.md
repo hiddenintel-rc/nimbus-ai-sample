@@ -1,23 +1,23 @@
 # Architecture & Decisions
 
-Status snapshot as of this document: **Part 1 and Part 2 of the LaunchDarkly SE
-exercise are complete and verified end-to-end.** Experimentation, AI Configs,
-and Integrations (extra credit) are not yet built. This file exists so the
-build can be picked back up, reviewed, or handed off without re-deriving the
-reasoning behind it.
+Status snapshot as of this document: **the core release/remediate and
+targeting patterns are complete and verified end-to-end.** Experimentation,
+AI Configs, and third-party integrations are not yet built. This file exists
+so the build can be picked back up, reviewed, or handed off without
+re-deriving the reasoning behind it.
 
 ## What this app is
 
-**Nimbus** is a small SaaS-style landing page for a tiered AI chat product
-(Free / Pro / Enterprise), built from scratch as the vehicle for LaunchDarkly's
-SE technical exercise. It is not a real product — there's no billing, no real
-user database, no production traffic. The entire point of the app is to give
-every required and extra-credit item in the exercise a genuine, coherent home
-instead of a contrived one: tiered model/context access via flags is a real,
-common LaunchDarkly use case, not a toy example built to fit the assignment.
+**Nimbus** is a self-contained demo project: a small SaaS-style landing page
+for a tiered AI chat product (Free / Pro / Enterprise). It is not a real
+product — there's no billing, no real user database, no production traffic.
+The point of the project is to explore how LaunchDarkly's feature-flag,
+targeting, and experimentation tools fit into a real tiered-SaaS pattern,
+using tiered model/context access as the running example, since that's a
+genuine, common way teams use feature management — not a toy scenario.
 
 Three design constraints have shaped every decision below:
-1. **Zero ongoing cost** — the operator didn't want to pay for this exercise.
+1. **Zero ongoing cost** — the operator didn't want to pay to run this.
 2. **No security regression** — nothing here should weaken the operator's
    existing home-lab security posture (see "Cloudflare isolation" below).
 3. **A stranger can run it** — a reviewer should be able to clone the repo and
@@ -26,13 +26,13 @@ Three design constraints have shaped every decision below:
 
 ## Status
 
-| Requirement | Status | Flag(s) |
+| Feature | Status | Flag(s) |
 |---|---|---|
-| Part 1 — Release and Remediate | ✅ Done, tested | `enable-conversation-memory` |
-| Part 2 — Target | ✅ Done, tested | `chat-tier-config` |
-| Extra credit — Experimentation | ⏳ Not started | will reuse `chat-tier-config` |
-| Extra credit — AI Configs | ⏳ Not started | new, separate from the flags above |
-| Extra credit — Integrations | ⏳ Not started, lowest priority | — |
+| Release & remediate (toggle a feature live, roll it back via a trigger) | ✅ Done, tested | `enable-conversation-memory` |
+| Targeting (rule-based + individual overrides) | ✅ Done, tested | `chat-tier-config` |
+| Experimentation | ⏳ Not started | will reuse `chat-tier-config` |
+| AI Configs (managed prompt/model config) | ⏳ Not started | new, separate from the flags above |
+| Third-party integrations | ⏳ Not started, lowest priority | — |
 | Vercel deployment | ⏳ Not started — app only runs locally so far | — |
 | README setup instructions | ⏳ Still the default `create-next-app` stub | — |
 
@@ -83,19 +83,19 @@ flowchart TB
 
 Two SDKs are deliberately both in play: the **client-side React SDK** powers
 the live "Memory: On/Off" badge (it needs a real browser connection to prove
-the no-reload requirement), while the **server-side Node SDK** makes every
+the no-reload behavior), while the **server-side Node SDK** makes every
 decision that actually matters for security or cost — which model to call,
 how much conversation history to send — because that logic must not be
 spoofable from the browser.
 
 ## Key decisions
 
-**Fresh app instead of an existing project.** Three personal projects were
+**Fresh project instead of an existing one.** Three personal projects were
 considered and ruled out: an Open WebUI deployment (no custom app code to
 flag), a retro-game cabinet (explicitly marked "do not publish," plus ROM
 copyright exposure), and a Jellyfin media vault (real household infra, heavy
 Docker/DB dependency chain for a reviewer to stand up). Building fresh avoided
-forcing the exercise into something it didn't fit.
+forcing a LaunchDarkly demo into something it didn't fit.
 
 **Local-hosted models as the primary backend, Groq as a manual fallback only.**
 The operator already runs a llama.cpp router with three usable models
@@ -151,23 +151,22 @@ documents "Node 20+" as an ordinary prerequisite.
 
 | Key | Type | Client-side? | Purpose |
 |---|---|---|---|
-| `sanity-check` | boolean | yes | Milestone-2 connectivity check only; removed from code once real flags landed. Safe to delete from the dashboard. |
-| `enable-conversation-memory` | boolean | yes (needs the live badge) | Part 1. Gates whether `/api/chat` forwards conversation history or treats every message as stateless. Has a Generic trigger wired to turn it off, for the remediation demo. |
-| `chat-tier-config` | JSON (3 variations: `free` / `pro` / `enterprise`) | no (server-only) | Part 2. Each variation is `{ model, maxContextMessages, label }`. Rule-based on the context's `tier` attribute; one individual target (`demo-pro` → `free`, a downgrade). |
+| `sanity-check` | boolean | yes | Early connectivity check only; removed from code once real flags landed. Safe to delete from the dashboard. |
+| `enable-conversation-memory` | boolean | yes (needs the live badge) | Release & remediate demo. Gates whether `/api/chat` forwards conversation history or treats every message as stateless. Has a Generic trigger wired to turn it off, for the remediation demo. |
+| `chat-tier-config` | JSON (3 variations: `free` / `pro` / `enterprise`) | no (server-only) | Targeting demo. Each variation is `{ model, maxContextMessages, label }`. Rule-based on the context's `tier` attribute; one individual target (`demo-pro` → `free`, a downgrade). |
 
-Context sent to LD: `{ kind: "user", key: <demo account id>, email, tier,
-accountAgeDays }`, built in `lib/ld-server.ts#buildUserContext` from the
+Context sent to LaunchDarkly: `{ kind: "user", key: <demo account id>, email,
+tier, accountAgeDays }`, built in `lib/ld-server.ts#buildUserContext` from the
 NextAuth session — never from client input.
 
 ## Known gaps (intentional, not forgotten)
 
 - **No Vercel deployment yet.** Everything above has been verified against
-  the local dev server only. Milestone 1's plan included connecting Vercel
-  early; that got deferred in favor of getting the LD/auth/inference wiring
-  solid first.
+  the local dev server only. Connecting Vercel early was part of the original
+  plan; that got deferred in favor of getting the auth/targeting/inference
+  wiring solid first.
 - **`README.md` is still the unmodified `create-next-app` default.** Setup
-  instructions, the demo script, and the "how to run this" walkthrough the
-  assignment explicitly asks for haven't been written yet — planned for the
-  final-polish pass.
+  instructions and a demo walkthrough haven't been written yet — planned for
+  the final-polish pass.
 - **Groq path is implemented but untested.** It type-checks and follows the
   same interface as the local path, but no live request has gone through it.
