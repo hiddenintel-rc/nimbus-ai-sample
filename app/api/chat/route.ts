@@ -1,5 +1,10 @@
 import { NextResponse } from 'next/server';
-import { chatCompletion, type ChatCompletionResult, type ChatMessage } from '@/lib/inference';
+import {
+  chatCompletion,
+  supportsWebSearch,
+  type ChatCompletionResult,
+  type ChatMessage,
+} from '@/lib/inference';
 import { getLDClient, getAiClient, buildUserContext } from '@/lib/ld-server';
 import { auth } from '@/lib/auth';
 import { DEFAULT_TIER_CONFIG, type TierConfig } from '@/lib/tier-config';
@@ -55,7 +60,7 @@ export async function POST(request: Request) {
   const client = await getLDClient();
   const context = buildUserContext(session.user);
 
-  // Both flag keys below must exist in your own LaunchDarkly environment —
+  // All three flag keys below must exist in your own LaunchDarkly environment —
   // see "Re-create the LaunchDarkly flags" in the README for exact keys,
   // variations, and targeting. The default values passed here only cover
   // LaunchDarkly being briefly unreachable, not a missing/never-created flag.
@@ -65,6 +70,12 @@ export async function POST(request: Request) {
     context,
     DEFAULT_TIER_CONFIG,
   )) as TierConfig;
+  const webSearchEnabled = await client.variation('enable-web-search', context, false);
+
+  // The browser's toggle is only a request: search runs when the flag allows
+  // it for this account and the backend supports it, never just because the
+  // client asked.
+  const webSearch = webSearchEnabled && body?.webSearch === true && supportsWebSearch();
 
   // AI Config (AgentControl) — a separate concern from chat-tier-config above.
   // This one controls the assistant's prompt/temperature for every account;
@@ -100,11 +111,11 @@ export async function POST(request: Request) {
       ? await aiConfig
           .createTracker()
           .trackMetricsOf(toLDMetrics, () =>
-            chatCompletion(tierConfig.model, messages, { temperature }),
+            chatCompletion(tierConfig.model, messages, { temperature, webSearch }),
           )
-      : await chatCompletion(tierConfig.model, messages, { temperature });
+      : await chatCompletion(tierConfig.model, messages, { temperature, webSearch });
 
-    return NextResponse.json({ reply: result.reply, servedBy: tierConfig });
+    return NextResponse.json({ reply: result.reply, servedBy: tierConfig, webSearch });
   } catch (error) {
     console.error('[api/chat]', error);
     return NextResponse.json(

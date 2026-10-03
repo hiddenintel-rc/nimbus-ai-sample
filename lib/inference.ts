@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import type { ChatCompletionCreateParamsNonStreaming } from 'openai/resources/chat/completions';
 
 export type ChatMessage = {
   role: 'system' | 'user' | 'assistant';
@@ -9,6 +10,14 @@ type Provider = 'local' | 'groq';
 
 function getProvider(): Provider {
   return process.env.INFERENCE_PROVIDER === 'groq' ? 'groq' : 'local';
+}
+
+/**
+ * Web search runs inside Open WebUI (its Tavily integration), so it only
+ * exists on the local provider — Groq has no equivalent.
+ */
+export function supportsWebSearch(): boolean {
+  return getProvider() === 'local';
 }
 
 let localClient: OpenAI | undefined;
@@ -62,17 +71,25 @@ export type ChatCompletionResult = {
   usage?: { promptTokens: number; completionTokens: number; totalTokens: number };
 };
 
+/** Open WebUI's own extension to the OpenAI request body. */
+type OpenWebUIParams = ChatCompletionCreateParamsNonStreaming & {
+  features?: { web_search?: boolean };
+};
+
 export async function chatCompletion(
   model: string,
   messages: ChatMessage[],
-  options?: { temperature?: number },
+  options?: { temperature?: number; webSearch?: boolean },
 ): Promise<ChatCompletionResult> {
   const client = getProvider() === 'groq' ? getGroqClient() : getLocalClient();
-  const completion = await client.chat.completions.create({
+  const params: OpenWebUIParams = {
     model,
     messages,
     ...(options?.temperature !== undefined ? { temperature: options.temperature } : {}),
-  });
+    // Open WebUI runs the search and adds the results to the model's context.
+    ...(options?.webSearch && supportsWebSearch() ? { features: { web_search: true } } : {}),
+  };
+  const completion = await client.chat.completions.create(params);
   const reply = completion.choices[0]?.message?.content;
 
   if (!reply) {

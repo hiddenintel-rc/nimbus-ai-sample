@@ -148,7 +148,7 @@ a small/fast model for Free, a larger one for Pro and Enterprise).
 
 ### 3. Re-create the LaunchDarkly flags
 
-This app reads three flags and sends one custom event (there's also a
+This app reads four flags and sends one custom event (there's also a
 separate AI Config, covered in step 4). All of these need to exist in your
 own LD environment — they are not created automatically.
 
@@ -193,6 +193,29 @@ brand rollout instead of a product feature.
 **Try it:** with the flag on, the header shows the cloud icon above
 "Nimbus." Flip the flag **Off** in the dashboard and watch the same tab (no
 reload) — it reverts instantly to the plain text wordmark.
+
+#### `enable-web-search` — boolean
+
+Offers a "Search the web" toggle in the chat. When it's on and the user
+turns the toggle on, the request asks Open WebUI to run a web search (its
+Tavily integration) and add the results to the model's context. Enabled for
+every tier in this demo; in a live product you'd restrict it with a rule on
+`tier`.
+
+1. **Create flag** → Name: `Enable Web Search`, Key: `enable-web-search`,
+   Type: **Boolean**.
+2. Turn on **"Available on client-side SDKs"** — the toggle's visibility
+   reads it live.
+3. Set the default rule to serve `true`, and toggle the flag **On**.
+
+Requires `INFERENCE_PROVIDER=local` and web search configured in Open WebUI
+(Admin → Settings → Web Search), with the Web Search permission granted to
+the user that owns `LOCAL_AI_API_KEY`. On Groq the toggle does nothing.
+
+**Try it:** turn the toggle on and ask about something recent; the reply's
+caption adds "searched the web". Flip the flag **Off** and the toggle
+disappears without a reload — and the server ignores search requests even
+from a stale page, since it re-checks the flag on every message.
 
 #### `chat-tier-config` — JSON
 

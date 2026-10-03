@@ -1,7 +1,8 @@
 # Architecture & Decisions
 
 Status snapshot as of this document: **release/remediate, targeting,
-experimentation, and AI Configs are complete and verified end-to-end.**
+experimentation, AI Configs, and flag-gated web search are complete and
+verified end-to-end.** Image generation has its flag but isn't built yet.
 Third-party integrations are not yet built. This file exists so the build
 can be picked back up, reviewed, or handed off without re-deriving the
 reasoning behind it.
@@ -32,6 +33,8 @@ Three design constraints have shaped every decision below:
 | Targeting (rule-based + individual overrides) | ✅ Done, tested | `chat-tier-config` |
 | Experimentation (metric + experiment on the same flag) | ✅ Done, tested | `chat-tier-config` + `clicked-upgrade` metric |
 | AI Configs (managed prompt/parameter tuning) | ✅ Done, tested | `nimbus-assistant` (AgentControl config, separate from the flags above) |
+| Web search (Open WebUI + Tavily), all tiers | ✅ Done, tested | `enable-web-search` |
+| Image generation, all tiers | ⏳ Flag created, not built yet | `enable-image-generation` |
 | Third-party integrations | ⏳ Parked, lowest priority — see "Known gaps" | — |
 | Vercel deployment | ⏳ Not started — app only runs locally so far | — |
 | README setup instructions | ✅ Done | — |
@@ -69,13 +72,14 @@ flowchart LR
 ```mermaid
 flowchart TB
     accTitle: Nimbus system overview
-    accDescr: The operator controls LaunchDarkly from its dashboard. LaunchDarkly streams live flag values to the visitor's browser and flag rules to the Nimbus app, which sends events and metrics back. The browser sends logins and chats to the Nimbus app, which calls a self-hosted model backend; Groq is an inactive fallback.
+    accDescr: The operator controls LaunchDarkly from its dashboard. LaunchDarkly streams live flag values to the visitor's browser and flag rules to the Nimbus app, which sends events and metrics back. The browser sends logins and chats to the Nimbus app, which calls a self-hosted model backend; that backend can run a Tavily web search when the flags allow it. Groq is an inactive fallback.
 
     Operator(["Operator<br/>LD dashboard · trigger URL"]):::ext
     LD["LaunchDarkly<br/>flags · AI Config · experiment"]:::ld
     Visitor["Visitor's browser<br/>landing page · chat · live badges"]:::nimbus
     App["Nimbus app — Next.js server<br/>auth · flag checks · inference calls"]:::nimbus
     Models["Self-hosted models<br/>operator's home lab, via Cloudflare Tunnel"]:::ext
+    Tavily["Tavily search API<br/>called by Open WebUI"]:::ext
     Groq["Groq API<br/>manual fallback"]:::off
 
     Operator -->|"edit flags and prompt,<br/>fire kill switch"| LD
@@ -84,6 +88,7 @@ flowchart TB
     Visitor -->|"log in, send a chat"| App
     App -->|"chat completion with the<br/>model + prompt the flags picked"| Models
     App -.->|"only if INFERENCE_PROVIDER=groq"| Groq
+    Models -->|"web search, when<br/>flag + toggle allow"| Tavily
 
     classDef nimbus fill:#2563eb,stroke:#1e3a8a,color:#fff
     classDef ld fill:#7c3aed,stroke:#4c1d95,color:#fff
@@ -111,7 +116,7 @@ default, Groq only when `INFERENCE_PROVIDER=groq` is set explicitly.
 ```mermaid
 sequenceDiagram
     accTitle: Chat request flow
-    accDescr: The browser posts the conversation to /api/chat. The route checks the session, builds a LaunchDarkly context from it, evaluates the memory flag, the tier flag and the AI Config locally, trims the history, calls the model backend, reports AI metrics to LaunchDarkly in the background, and returns the reply with a served-by caption.
+    accDescr: The browser posts the conversation to /api/chat. The route checks the session, builds a LaunchDarkly context from it, evaluates the memory flag, the tier flag, the AI Config and the web search flag locally, trims the history, calls the model backend (which runs a web search only when the flag is on and the user's toggle asked for it), reports AI metrics to LaunchDarkly in the background, and returns the reply with a served-by caption.
     autonumber
 
     participant B as Browser<br/>(ChatPanel)
@@ -131,11 +136,16 @@ sequenceDiagram
     SDK-->>R: model · maxContextMessages · label
     R->>SDK: nimbus-assistant AI Config?
     SDK-->>R: system prompt · temperature
+    R->>SDK: enable-web-search?
+    SDK-->>R: on / off
     R->>R: Trim history<br/>memory off → last message only<br/>memory on → last N for this tier
     R->>M: Chat completion<br/>(tier's model, AI Config prompt)
+    opt Search flag on and the user's toggle on
+        M->>M: Tavily search,<br/>results added to the context
+    end
     M-->>R: Reply + token usage
     R--)SDK: Token, latency, success metrics<br/>(flushed to LaunchDarkly in the background)
-    R-->>B: Reply + "served by" model and tier
+    R-->>B: Reply + "served by" model and tier<br/>(+ "searched the web")
 ```
 
 Every LaunchDarkly answer above comes from the SDK's in-memory copy of the
@@ -346,6 +356,8 @@ documents "Node 20+" as an ordinary prerequisite.
 | `sanity-check` | boolean | yes | Early connectivity check only; removed from code once real flags landed. Safe to delete from the dashboard. |
 | `enable-conversation-memory` | boolean | yes (needs the live badge) | Release & remediate demo. Gates whether `/api/chat` forwards conversation history or treats every message as stateless. Has a Generic trigger wired to turn it off, for the remediation demo. |
 | `new-logo` | boolean | yes (needs the live swap) | Gates the redesigned cloud + wordmark logo (`components/Logo.tsx`) vs. the original plain text wordmark, via `components/BrandLogo.tsx`. A second, independent example of the release/remediate pattern — applied to a brand/visual rollout instead of a product feature, which is a genuinely common real-world use of flags. Defaults to the new logo if the flag is missing. |
+| `enable-web-search` | boolean | yes (shows/hides the toggle live) | Kill switch + entitlement for web search. `/api/chat` only adds Open WebUI's `features.web_search` when this flag is on for the context, the user's toggle asked for it, and the provider is local — the browser can request search but never force it. Serves `true` to every tier for the demo; a `tier` rule would restrict it in a live product. |
+| `enable-image-generation` | boolean | yes | Created in LaunchDarkly (serves `true` to all tiers); not read by the code yet. |
 | `chat-tier-config` | JSON (3 variations: `free` / `pro` / `enterprise`) | no (server-only) | Targeting demo. Each variation is `{ model, maxContextMessages, label }`. Rule-based on the context's `tier` attribute; one individual target (`demo-pro` → `free`, a downgrade). Its Default rule also hosts the experiment below. |
 
 Context sent to LaunchDarkly: `{ kind: "user", key: <demo account id>, email,
@@ -384,6 +396,14 @@ usage, success, and duration report back to LaunchDarkly automatically.
   plan; that got deferred in favor of getting the auth/targeting/inference/
   experimentation wiring solid first, and is intentionally on hold until the
   app is considered ready for a public listing.
+- **Web search sources aren't shown.** Open WebUI runs the search and the
+  model cites results as `[1]`, `[2]`, but the source list goes to Open
+  WebUI's own chat screen over its live (websocket) connection, not into the
+  API response — so Nimbus shows the answer with dangling citation markers
+  and no links. Fix options: strip the markers, or surface sources if a
+  future Open WebUI version returns them in the response.
+- **Replies render as plain text.** The model's Markdown (`**bold**`, lists)
+  shows literally in the chat box.
 - **Groq path is implemented but untested.** It type-checks and follows the
   same interface as the local path, but no live request has gone through it.
 - **Integrations (optional extra credit) parked, not abandoned.** Researched

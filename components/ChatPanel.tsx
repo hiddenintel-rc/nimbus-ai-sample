@@ -1,15 +1,29 @@
 'use client';
 
 import { useState, type FormEvent } from 'react';
+import { useFlags } from 'launchdarkly-react-client-sdk';
 
 type ServedBy = { model: string; label: string };
-type Message = { role: 'user' | 'assistant'; content: string; servedBy?: ServedBy };
+type Message = {
+  role: 'user' | 'assistant';
+  content: string;
+  servedBy?: ServedBy;
+  webSearch?: boolean;
+};
 
 export default function ChatPanel() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [webSearch, setWebSearch] = useState(false);
+  const [searching, setSearching] = useState(false);
+
+  // `enable-web-search` only decides whether the toggle is offered (and hides it
+  // live when the flag goes off); the server re-checks the flag on every request.
+  const flags = useFlags();
+  const webSearchAvailable = Boolean(flags['enable-web-search']);
+  const searchRequested = webSearchAvailable && webSearch;
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -20,13 +34,14 @@ export default function ChatPanel() {
     setMessages(nextMessages);
     setInput('');
     setIsLoading(true);
+    setSearching(searchRequested);
     setError(null);
 
     try {
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: nextMessages }),
+        body: JSON.stringify({ messages: nextMessages, webSearch: searchRequested }),
       });
       const data = await response.json();
       if (!response.ok) {
@@ -34,7 +49,12 @@ export default function ChatPanel() {
       }
       setMessages((prev) => [
         ...prev,
-        { role: 'assistant', content: data.reply, servedBy: data.servedBy },
+        {
+          role: 'assistant',
+          content: data.reply,
+          servedBy: data.servedBy,
+          webSearch: data.webSearch,
+        },
       ]);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong.');
@@ -68,13 +88,14 @@ export default function ChatPanel() {
             {message.servedBy && (
               <p className="mt-1 text-xs text-zinc-400 dark:text-zinc-600">
                 served by {message.servedBy.model} &middot; {message.servedBy.label} config
+                {message.webSearch && <> &middot; searched the web</>}
               </p>
             )}
           </div>
         ))}
         {isLoading && (
           <div className="self-start rounded-xl bg-zinc-100 px-3 py-2 text-sm text-zinc-500 dark:bg-zinc-900 dark:text-zinc-500">
-            Thinking…
+            {searching ? 'Searching the web…' : 'Thinking…'}
           </div>
         )}
       </div>
@@ -96,6 +117,21 @@ export default function ChatPanel() {
           Send
         </button>
       </form>
+
+      {webSearchAvailable && (
+        <button
+          type="button"
+          aria-pressed={webSearch}
+          onClick={() => setWebSearch((on) => !on)}
+          className={
+            webSearch
+              ? 'self-start rounded-full border border-blue-600 bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700 dark:border-blue-500 dark:bg-blue-950 dark:text-blue-300'
+              : 'self-start rounded-full border border-black/[.1] px-3 py-1 text-xs font-medium text-zinc-600 hover:border-black/[.3] dark:border-white/[.145] dark:text-zinc-400'
+          }
+        >
+          Search the web: {webSearch ? 'On' : 'Off'}
+        </button>
+      )}
     </div>
   );
 }
