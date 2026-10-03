@@ -51,7 +51,7 @@ export default async function Home() {
             className="hidden h-52 w-52 object-contain dark:block"
           />
           <h1 className="text-4xl font-semibold leading-tight tracking-tight text-black dark:text-zinc-50 sm:text-5xl">
-            An AI assistant that scales with your plan.
+            Brainstorming?
           </h1>
           <p className="max-w-lg text-lg leading-7 text-zinc-600 dark:text-zinc-400">
             Free, Pro, and Enterprise tiers get different models and context
