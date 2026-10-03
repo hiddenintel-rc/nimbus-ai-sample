@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono, Baloo_2 } from "next/font/google";
 import LDClientProvider from "@/components/LDClientProvider";
+import { auth } from "@/lib/auth";
+import { buildUserContext } from "@/lib/ld-server";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -25,14 +27,17 @@ export const metadata: Metadata = {
     "Nimbus is a demo project exploring tiered AI chat access, powered by LaunchDarkly for feature flags, targeting, and experimentation.",
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+export default async function RootLayout({ children }: LayoutProps<"/">) {
+  const session = await auth();
+  const ldContext = session?.user ? buildUserContext(session.user) : undefined;
+
   return (
     <html
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} ${baloo.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">
-        <LDClientProvider>{children}</LDClientProvider>
+        <LDClientProvider initialContext={ldContext}>{children}</LDClientProvider>
       </body>
     </html>
   );

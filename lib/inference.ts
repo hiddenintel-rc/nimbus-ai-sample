@@ -16,8 +16,9 @@ let groqClient: OpenAI | undefined;
 
 /**
  * Local AI stack (Open WebUI's OpenAI-compatible API), reached through a
- * Cloudflare Tunnel + a path-scoped Access Service Auth policy. Never points
- * at llama.cpp's own port directly — that's intentionally loopback-only.
+ * Cloudflare Tunnel on a dedicated hostname whose Access application allows
+ * Service Auth only. Never points at llama.cpp's own port directly — that's
+ * intentionally loopback-only.
  */
 function getLocalClient(): OpenAI {
   if (!localClient) {

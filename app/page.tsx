@@ -1,15 +1,18 @@
 import BrandLogo from "@/components/BrandLogo";
 import ChatPanel from "@/components/ChatPanel";
+import LDUserSync from "@/components/LDUserSync";
 import MemoryStatusBadge from "@/components/MemoryStatusBadge";
 import UpgradeCta from "@/components/UpgradeCta";
 import { auth } from "@/lib/auth";
 import { logoutAction } from "@/lib/auth-actions";
+import { buildUserContext } from "@/lib/ld-server";
 
 export default async function Home() {
   const session = await auth();
 
   return (
     <div className="flex min-h-full flex-1 flex-col bg-zinc-50 font-sans dark:bg-black">
+      <LDUserSync context={session?.user ? buildUserContext(session.user) : undefined} />
       <header className="flex items-center justify-between px-6 py-4 sm:px-12">
         <BrandLogo />
         <nav className="flex items-center gap-6 text-sm font-medium text-zinc-600 dark:text-zinc-400">
