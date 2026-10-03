@@ -1,8 +1,10 @@
 import { NextResponse } from 'next/server';
-import { chatCompletion, type ChatMessage } from '@/lib/inference';
-import { getLDClient, buildUserContext } from '@/lib/ld-server';
+import { chatCompletion, type ChatCompletionResult, type ChatMessage } from '@/lib/inference';
+import { getLDClient, getAiClient, buildUserContext } from '@/lib/ld-server';
 import { auth } from '@/lib/auth';
 import { DEFAULT_TIER_CONFIG, type TierConfig } from '@/lib/tier-config';
+import { AI_CONFIG_KEY, DEFAULT_AI_CONFIG } from '@/lib/ai-config';
+import type { LDAIMetrics } from '@launchdarkly/server-sdk-ai';
 
 type IncomingMessage = { role: 'user' | 'assistant'; content: string };
 
@@ -19,6 +21,19 @@ function isValidHistory(value: unknown): value is IncomingMessage[] {
         entry.content.trim().length > 0,
     )
   );
+}
+
+function toLDMetrics(result: ChatCompletionResult): LDAIMetrics {
+  return {
+    success: true,
+    tokens: result.usage
+      ? {
+          total: result.usage.totalTokens,
+          input: result.usage.promptTokens,
+          output: result.usage.completionTokens,
+        }
+      : undefined,
+  };
 }
 
 export async function POST(request: Request) {
@@ -51,6 +66,14 @@ export async function POST(request: Request) {
     DEFAULT_TIER_CONFIG,
   )) as TierConfig;
 
+  // AI Config (AgentControl) — a separate concern from chat-tier-config above.
+  // This one controls the assistant's prompt/temperature for every account;
+  // it never decides which model backend answers — that stays tier-driven.
+  // Must exist in your own LD environment — see "Create the AI Config" in
+  // the README.
+  const aiClient = await getAiClient();
+  const aiConfig = await aiClient.completionConfig(AI_CONFIG_KEY, context, DEFAULT_AI_CONFIG);
+
   // With memory off (legacy behavior), only the latest message is sent —
   // every turn is treated as a fresh conversation, same as before that flag
   // existed. With memory on, the tier config's context window caps how much
@@ -59,17 +82,29 @@ export async function POST(request: Request) {
     ? history.slice(-tierConfig.maxContextMessages)
     : history.slice(-1);
 
-  const messages: ChatMessage[] = [
-    {
-      role: 'system',
-      content: 'You are the Nimbus assistant, a helpful AI chat demo. Keep replies concise.',
-    },
-    ...relevantHistory,
-  ];
+  const systemMessages: ChatMessage[] =
+    aiConfig.enabled && aiConfig.messages?.length
+      ? aiConfig.messages
+      : [
+          {
+            role: 'system',
+            content: 'You are the Nimbus assistant, a helpful AI chat demo. Keep replies concise.',
+          },
+        ];
+
+  const messages: ChatMessage[] = [...systemMessages, ...relevantHistory];
+  const temperature = aiConfig.model?.parameters?.temperature as number | undefined;
 
   try {
-    const reply = await chatCompletion(tierConfig.model, messages);
-    return NextResponse.json({ reply, servedBy: tierConfig });
+    const result = aiConfig.enabled
+      ? await aiConfig
+          .createTracker()
+          .trackMetricsOf(toLDMetrics, () =>
+            chatCompletion(tierConfig.model, messages, { temperature }),
+          )
+      : await chatCompletion(tierConfig.model, messages, { temperature });
+
+    return NextResponse.json({ reply: result.reply, servedBy: tierConfig });
   } catch (error) {
     console.error('[api/chat]', error);
     return NextResponse.json(

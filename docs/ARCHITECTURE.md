@@ -1,8 +1,8 @@
 # Architecture & Decisions
 
-Status snapshot as of this document: **release/remediate, targeting, and
-experimentation are complete and verified end-to-end.** AI Configs and
-third-party integrations are not yet built. This file exists so the build
+Status snapshot as of this document: **release/remediate, targeting,
+experimentation, and AI Configs are complete and verified end-to-end.**
+Third-party integrations are not yet built. This file exists so the build
 can be picked back up, reviewed, or handed off without re-deriving the
 reasoning behind it.
 
@@ -31,7 +31,7 @@ Three design constraints have shaped every decision below:
 | Release & remediate (toggle a feature live, roll it back via a trigger) | ✅ Done, tested | `enable-conversation-memory` |
 | Targeting (rule-based + individual overrides) | ✅ Done, tested | `chat-tier-config` |
 | Experimentation (metric + experiment on the same flag) | ✅ Done, tested | `chat-tier-config` + `clicked-upgrade` metric |
-| AI Configs (managed prompt/model config) | ⏳ Not started | new, separate from the flags above |
+| AI Configs (managed prompt/parameter tuning) | ✅ Done, tested | `nimbus-assistant` (AgentControl config, separate from the flags above) |
 | Third-party integrations | ⏳ Not started, lowest priority | — |
 | Vercel deployment | ⏳ Not started — app only runs locally so far | — |
 | README setup instructions | ✅ Done | — |
@@ -59,6 +59,7 @@ flowchart TB
         FlagMem["enable-conversation-memory (boolean)"]
         FlagTier["chat-tier-config (JSON, 3 variations)<br/>Default rule = experiment: Free vs Pro"]
         Metric["clicked-upgrade metric"]
+        AiConfig["nimbus-assistant AgentControl config<br/>prompt + temperature, all tiers"]
     end
 
     Simulator["scripts/simulate-experiment.ts<br/>synthetic free-tier traffic, run manually"]
@@ -78,7 +79,7 @@ flowchart TB
     UI -->|"fetch /api/chat"| ChatRoute
     LoginPage --> AuthRoute
     ChatRoute --> LDServerLib
-    LDServerLib -->|"evaluate flags"| LD
+    LDServerLib -->|"evaluate flags + AI Config"| LD
     ChatRoute --> InferenceLib
     AuthRoute --> DemoUsers
     InferenceLib --> Tunnel --> Access --> OWUI --> Llama
@@ -145,6 +146,33 @@ Free Tier instead ("stepped down for exceeding fair use") — a realistic
 SaaS pattern that proves individual targeting overrides a rule without ever
 granting more access than a tier's own public documentation already implies.
 
+**AI Config and chat-tier-config are two systems with two different jobs, not
+one duplicated.** `chat-tier-config` stays the access-control layer — which
+model backend and context length an account's *tier* is allowed. The new
+`nimbus-assistant` AI Config (LaunchDarkly's AgentControl product; the SDK
+still calls it `LDAIConfig`/`completionConfig`) controls the assistant's
+system prompt and `temperature` for every account regardless of tier —
+a product/prompt-tuning concern, not an access-control one. Its own `model`
+field exists because the schema requires one, but the app never reads it for
+routing, specifically so the two systems can't fight over which one decides
+the backend. Worth being explicit about what LaunchDarkly's AI Config
+actually is here: it does not host or run any model — it only serves
+*configuration* (prompt text, parameters) the same way a regular flag serves
+a value. The real inference call, and whatever credentials it requires, is
+still entirely on this app's own code (`lib/inference.ts`), unchanged by
+adding this.
+
+**Avoided LaunchDarkly's official OpenAI provider package.**
+`@launchdarkly/server-sdk-ai-openai` would have been the "blessed" way to
+auto-invoke a model from an AI Config, but it pins `openai@>=4 <7` while this
+app already runs `openai@7`. Downgrading a working dependency just to use an
+optional convenience wrapper wasn't worth it. Instead, `app/api/chat/route.ts`
+calls `aiClient.completionConfig()` for the prompt/parameters, keeps calling
+the existing `chatCompletion()` exactly as before, and wraps that call in the
+AI Config's own `tracker.trackMetricsOf()` to report real token/latency/
+success metrics back to LaunchDarkly — same outcome, zero new dependency
+conflicts.
+
 **Closed-group review via a privately shared `.env.local`, not public self-service.**
 The README leads with "clone the repo, drop in the `.env.local` you were
 given, run it" rather than "set up your own LaunchDarkly account and model
@@ -161,7 +189,7 @@ touch the operator's system Node, a Node 22 binary lives at `.tools/node/`
 (gitignored, never committed) — invisible to the shipped repo, which simply
 documents "Node 20+" as an ordinary prerequisite.
 
-## Flag inventory
+## Flag and AI Config inventory
 
 | Key | Type | Client-side? | Purpose |
 |---|---|---|---|
@@ -184,6 +212,17 @@ which behaves like a conversion rate here since the UI's upgrade button only
 fires it once per account). `scripts/simulate-experiment.ts` generates
 synthetic free-tier sessions against it — real LD exposures and events, but
 documented as synthetic data since the app has no production audience.
+
+**AI Config:** `nimbus-assistant`, an AgentControl config in Completion mode
+(not a flag, but evaluated the same way via `aiClient.completionConfig()`).
+One variation: a custom-registered model entry (`Qwen3.5-4B (Self Hosted)`,
+$0 token costs — accurate, since it's self-hosted) with a `temperature`
+parameter, plus a system-message prompt. Both the prompt and temperature are
+re-fetched from LaunchDarkly on every chat request and passed straight into
+the real inference call — confirmed live by editing the prompt in the
+dashboard mid-session and watching the very next response change tone with
+no redeploy. Wrapped in `aiConfig.createTracker().trackMetricsOf()` so token
+usage, success, and duration report back to LaunchDarkly automatically.
 
 ## Known gaps (intentional, not forgotten)
 

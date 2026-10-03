@@ -1,7 +1,9 @@
 import { init, type LDClient, type LDContext } from '@launchdarkly/node-server-sdk';
+import { initAi, type LDAIClient } from '@launchdarkly/server-sdk-ai';
 import type { Tier } from '@/lib/demo-users';
 
 let clientPromise: Promise<LDClient> | undefined;
+let aiClient: LDAIClient | undefined;
 
 function getSdkKey(): string {
   const key = process.env.LAUNCHDARKLY_SDK_KEY;
@@ -23,6 +25,18 @@ export function getLDClient(): Promise<LDClient> {
     clientPromise = client.waitForInitialization({ timeout: 10 }).then(() => client);
   }
   return clientPromise;
+}
+
+/**
+ * AI SDK wrapper around the same base client above — initAi() only needs
+ * variation()/track(), which the server SDK client already provides.
+ */
+export async function getAiClient(): Promise<LDAIClient> {
+  if (!aiClient) {
+    const client = await getLDClient();
+    aiClient = initAi(client);
+  }
+  return aiClient;
 }
 
 /**

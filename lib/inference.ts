@@ -56,13 +56,35 @@ function getGroqClient(): OpenAI {
   return groqClient;
 }
 
-export async function chatCompletion(model: string, messages: ChatMessage[]): Promise<string> {
+export type ChatCompletionResult = {
+  reply: string;
+  usage?: { promptTokens: number; completionTokens: number; totalTokens: number };
+};
+
+export async function chatCompletion(
+  model: string,
+  messages: ChatMessage[],
+  options?: { temperature?: number },
+): Promise<ChatCompletionResult> {
   const client = getProvider() === 'groq' ? getGroqClient() : getLocalClient();
-  const completion = await client.chat.completions.create({ model, messages });
+  const completion = await client.chat.completions.create({
+    model,
+    messages,
+    ...(options?.temperature !== undefined ? { temperature: options.temperature } : {}),
+  });
   const reply = completion.choices[0]?.message?.content;
 
   if (!reply) {
     throw new Error('Inference provider returned an empty response.');
   }
-  return reply;
+
+  const usage = completion.usage
+    ? {
+        promptTokens: completion.usage.prompt_tokens,
+        completionTokens: completion.usage.completion_tokens,
+        totalTokens: completion.usage.total_tokens,
+      }
+    : undefined;
+
+  return { reply, usage };
 }

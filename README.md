@@ -52,6 +52,9 @@ someone else yourself.
   then ask "what's my name?" — it should recall it across turns.
 - As a free-tier account, the "Upgrade to Pro" button fires the conversion
   metric behind the Experimentation setup — no real checkout happens.
+- The assistant's tone/personality and temperature come from a LaunchDarkly
+  AI Config (`nimbus-assistant`), fetched fresh on every message — editing
+  the prompt in the LD dashboard changes the very next reply, no redeploy.
 
 If something doesn't work, jump to "Re-creating this independently" below —
 the same steps explain what each flag is doing, which is useful even if you
@@ -67,10 +70,13 @@ didn't set it up yourself.
   simulator for generating sample data
 - Login gating, with the actual enforcement server-side, not just a hidden
   UI element
+- A LaunchDarkly AI Config managing the assistant's prompt and temperature —
+  a separate concern from tier-based model routing, both live-editable with
+  no redeploy
 
-Not yet built: a managed AI Config for the chat assistant's prompt/model,
-and a production deployment. See `docs/ARCHITECTURE.md` for the full status
-and the reasoning behind what's here.
+Not yet built: third-party integrations and a production deployment. See
+`docs/ARCHITECTURE.md` for the full status and the reasoning behind what's
+here.
 
 ## Scripts
 
@@ -223,7 +229,38 @@ generates synthetic free-tier traffic against it so the results page has
 something to show — see the script's header comment for details; this is
 clearly synthetic data, not real usage.
 
-### 4. Run it
+### 4. Create the AI Config
+
+This is a separate LaunchDarkly product (branded **AgentControl** in the
+dashboard, under **Agents** in the left sidebar) from the flags above — it's
+not under Features. It controls the assistant's prompt and temperature for
+every account, independent of tier.
+
+1. **Agents → Configs → Create config** → **Completion** mode. Name:
+   `Nimbus Assistant`, Key: `nimbus-assistant` (must match exactly).
+2. On the config's **Variations** tab, in the one default variation:
+   - **Model** → **Select a model → + Add a model** to register a custom
+     one (adjust to match whatever you set `LOCAL_AI_BASE_URL`'s model names
+     to, or your Groq model if using Groq): Name `Qwen3.5-4B (Self Hosted)`,
+     Model ID `Qwen3.5-4B`, Input/output token cost `$0` (accurate for a
+     self-hosted model). This registration is just metadata for LaunchDarkly's
+     own cost tracking — the app never reads this model field to decide
+     which backend to call; that's still `chat-tier-config`'s job.
+   - Add the parameter **temperature**, value `0.7` (or enter
+     `{ "temperature": 0.7 }` if you're given a raw JSON box instead of a
+     parameter picker).
+   - Add a **System** message with whatever prompt you want the assistant
+     to follow.
+3. **Review and save**, then on the **Targeting** tab set the default rule
+   to serve this variation and toggle the config **On**.
+
+**Try it:** ask the assistant something generic like "tell me about your
+day." Then go back and edit the system message to something distinctive
+(e.g. "You are a pirate. Speak only in pirate slang.") and save. Ask again,
+same conversation — the very next reply should reflect the new prompt
+immediately, with no redeploy.
+
+### 5. Run it
 
 ```bash
 npm run dev

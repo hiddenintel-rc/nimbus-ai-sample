@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@launchdarkly/node-server-sdk": "^9.14.1",
+    "@launchdarkly/server-sdk-ai": "^2.0.10",
     "bcryptjs": "^3.0.3",
     "launchdarkly-react-client-sdk": "^3.9.4",
     "next": "16.3.8",
