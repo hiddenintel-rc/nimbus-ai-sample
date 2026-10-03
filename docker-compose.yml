@@ -28,15 +28,17 @@ services:
       # Blank: the Access service token is only for the public hostname.
       CF_ACCESS_CLIENT_ID: ""
       CF_ACCESS_CLIENT_SECRET: ""
+    # Loopback only — the host is reachable from the internet solely through
+    # the Cloudflare Tunnel, same as every other service here.
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3200:3000"
     restart: unless-stopped
     networks:
       - openwebui
 
 networks:
-  # The network Open WebUI already runs on. Check the exact name with
-  # `docker network ls`; it's usually <its-compose-project>_default.
+  # The network Open WebUI already runs on, so it's reachable by container
+  # name. Confirm with `docker inspect open-webui` if this ever moves.
   openwebui:
     external: true
-    name: open-webui_default
+    name: local-ai_default
