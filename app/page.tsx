@@ -1,5 +1,6 @@
 import ChatPanel from "@/components/ChatPanel";
 import MemoryStatusBadge from "@/components/MemoryStatusBadge";
+import UpgradeCta from "@/components/UpgradeCta";
 import { auth } from "@/lib/auth";
 import { logoutAction } from "@/lib/auth-actions";
 
@@ -65,7 +66,10 @@ export default async function Home() {
             )}
           </div>
           {session?.user ? (
-            <ChatPanel />
+            <>
+              <ChatPanel />
+              {session.user.tier === "free" && <UpgradeCta />}
+            </>
           ) : (
             <div className="flex flex-col items-start gap-3 py-4">
               <p className="text-sm text-zinc-500 dark:text-zinc-500">

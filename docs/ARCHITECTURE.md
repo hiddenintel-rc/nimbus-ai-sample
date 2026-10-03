@@ -1,10 +1,10 @@
 # Architecture & Decisions
 
-Status snapshot as of this document: **the core release/remediate and
-targeting patterns are complete and verified end-to-end.** Experimentation,
-AI Configs, and third-party integrations are not yet built. This file exists
-so the build can be picked back up, reviewed, or handed off without
-re-deriving the reasoning behind it.
+Status snapshot as of this document: **release/remediate, targeting, and
+experimentation are complete and verified end-to-end.** AI Configs and
+third-party integrations are not yet built. This file exists so the build
+can be picked back up, reviewed, or handed off without re-deriving the
+reasoning behind it.
 
 ## What this app is
 
@@ -30,11 +30,11 @@ Three design constraints have shaped every decision below:
 |---|---|---|
 | Release & remediate (toggle a feature live, roll it back via a trigger) | ✅ Done, tested | `enable-conversation-memory` |
 | Targeting (rule-based + individual overrides) | ✅ Done, tested | `chat-tier-config` |
-| Experimentation | ⏳ Not started | will reuse `chat-tier-config` |
+| Experimentation (metric + experiment on the same flag) | ✅ Done, tested | `chat-tier-config` + `clicked-upgrade` metric |
 | AI Configs (managed prompt/model config) | ⏳ Not started | new, separate from the flags above |
 | Third-party integrations | ⏳ Not started, lowest priority | — |
 | Vercel deployment | ⏳ Not started — app only runs locally so far | — |
-| README setup instructions | ⏳ Still the default `create-next-app` stub | — |
+| README setup instructions | ✅ Done | — |
 
 ## Architecture
 
@@ -49,6 +49,7 @@ flowchart TB
         LoginPage["app/login/page.tsx"]
         AuthRoute["/api/auth/[...nextauth]<br/>NextAuth (Auth.js v5)"]
         ChatRoute["/api/chat<br/>session check -> flag eval -> inference call"]
+        TrackRoute["/api/track-upgrade<br/>fires clicked-upgrade metric"]
         LDServerLib["lib/ld-server.ts<br/>Node Server SDK + context builder"]
         InferenceLib["lib/inference.ts<br/>provider switch"]
         DemoUsers["lib/demo-users.ts<br/>3 static accounts, bcrypt hash, tier + accountAgeDays"]
@@ -56,8 +57,11 @@ flowchart TB
 
     subgraph LD["LaunchDarkly (Test environment)"]
         FlagMem["enable-conversation-memory (boolean)"]
-        FlagTier["chat-tier-config (JSON, 3 variations)"]
+        FlagTier["chat-tier-config (JSON, 3 variations)<br/>Default rule = experiment: Free vs Pro"]
+        Metric["clicked-upgrade metric"]
     end
+
+    Simulator["scripts/simulate-experiment.ts<br/>synthetic free-tier traffic, run manually"]
 
     subgraph Home["Operator's home network"]
         Tunnel["Cloudflare Tunnel"]
@@ -141,6 +145,16 @@ Free Tier instead ("stepped down for exceeding fair use") — a realistic
 SaaS pattern that proves individual targeting overrides a rule without ever
 granting more access than a tier's own public documentation already implies.
 
+**Closed-group review via a privately shared `.env.local`, not public self-service.**
+The README leads with "clone the repo, drop in the `.env.local` you were
+given, run it" rather than "set up your own LaunchDarkly account and model
+backend." The real LD environment (with the flags, targeting, and experiment
+already configured) and a working inference backend are shared directly with
+reviewers outside the repo, not published. The from-scratch setup
+instructions still exist in the README as a secondary path, both for
+transparency into how it works and for anyone who genuinely wants to
+reproduce it independently — but they're not the primary flow.
+
 **Project-local Node 22, not a system upgrade.** The dev machine's system Node
 (18.19.1) is older than what Next.js 16 / Tailwind v4 require. Rather than
 touch the operator's system Node, a Node 22 binary lives at `.tools/node/`
@@ -153,20 +167,30 @@ documents "Node 20+" as an ordinary prerequisite.
 |---|---|---|---|
 | `sanity-check` | boolean | yes | Early connectivity check only; removed from code once real flags landed. Safe to delete from the dashboard. |
 | `enable-conversation-memory` | boolean | yes (needs the live badge) | Release & remediate demo. Gates whether `/api/chat` forwards conversation history or treats every message as stateless. Has a Generic trigger wired to turn it off, for the remediation demo. |
-| `chat-tier-config` | JSON (3 variations: `free` / `pro` / `enterprise`) | no (server-only) | Targeting demo. Each variation is `{ model, maxContextMessages, label }`. Rule-based on the context's `tier` attribute; one individual target (`demo-pro` → `free`, a downgrade). |
+| `chat-tier-config` | JSON (3 variations: `free` / `pro` / `enterprise`) | no (server-only) | Targeting demo. Each variation is `{ model, maxContextMessages, label }`. Rule-based on the context's `tier` attribute; one individual target (`demo-pro` → `free`, a downgrade). Its Default rule also hosts the experiment below. |
 
 Context sent to LaunchDarkly: `{ kind: "user", key: <demo account id>, email,
 tier, accountAgeDays }`, built in `lib/ld-server.ts#buildUserContext` from the
 NextAuth session — never from client input.
 
+**Experiment:** on `chat-tier-config`'s Default rule — Free Tier (control)
+vs. Pro Tier, 50/50, among contexts that reach that rule (i.e. `tier` isn't
+`pro` or `enterprise`). Enterprise Tier is explicitly excluded from the
+experiment's variation set entirely (not just weighted low) — an earlier
+pass defaulted to a 3-way split across all of the flag's variations, which
+would have randomly routed a slice of free-tier traffic to the most
+expensive model. Primary metric: `clicked-upgrade` (Count/average-per-user,
+which behaves like a conversion rate here since the UI's upgrade button only
+fires it once per account). `scripts/simulate-experiment.ts` generates
+synthetic free-tier sessions against it — real LD exposures and events, but
+documented as synthetic data since the app has no production audience.
+
 ## Known gaps (intentional, not forgotten)
 
 - **No Vercel deployment yet.** Everything above has been verified against
   the local dev server only. Connecting Vercel early was part of the original
-  plan; that got deferred in favor of getting the auth/targeting/inference
-  wiring solid first.
-- **`README.md` is still the unmodified `create-next-app` default.** Setup
-  instructions and a demo walkthrough haven't been written yet — planned for
-  the final-polish pass.
+  plan; that got deferred in favor of getting the auth/targeting/inference/
+  experimentation wiring solid first, and is intentionally on hold until the
+  app is considered ready for a public listing.
 - **Groq path is implemented but untested.** It type-checks and follows the
   same interface as the local path, but no live request has gone through it.

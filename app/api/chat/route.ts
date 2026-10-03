@@ -40,6 +40,10 @@ export async function POST(request: Request) {
   const client = await getLDClient();
   const context = buildUserContext(session.user);
 
+  // Both flag keys below must exist in your own LaunchDarkly environment —
+  // see "Re-create the LaunchDarkly flags" in the README for exact keys,
+  // variations, and targeting. The default values passed here only cover
+  // LaunchDarkly being briefly unreachable, not a missing/never-created flag.
   const memoryEnabled = await client.variation('enable-conversation-memory', context, false);
   const tierConfig = (await client.variation(
     'chat-tier-config',
