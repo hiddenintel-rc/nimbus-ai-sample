@@ -489,7 +489,11 @@ traffic will randomly get routed to your most expensive model), attach the
 metric, and start it. `npm run simulate:experiment [count]` (default 300)
 generates synthetic free-tier traffic against it so the results page has
 something to show — see the script's header comment for details; this is
-clearly synthetic data, not real usage.
+clearly synthetic data, not real usage. Only contexts that reach the
+default rule enter the experiment, so `demo-pro` and `demo-enterprise`
+traffic never counts toward it. The result this project's own run produced,
+and the decision drawn from it, are under "Experiment result and decision"
+in `docs/ARCHITECTURE.md`.
 
 ### 4. Create the AI Config
 
