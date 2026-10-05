@@ -41,7 +41,7 @@ Three design constraints have shaped every decision below:
 |---|---|---|
 | Release & remediate (toggle a feature live, roll it back via a trigger) | ✅ Done, tested | `enable-conversation-memory` |
 | Targeting (rule-based + individual overrides) | ✅ Done, tested | `chat-tier-config` |
-| Experimentation (metric + experiment on the same flag) | ✅ Done, tested | `chat-tier-config` + `clicked-upgrade` metric |
+| Experimentation (metric + experiment on the same flag) | ✅ Done, significant result and decision recorded below | `chat-tier-config` + `upgrade-interest` metric (`clicked-upgrade` event) |
 | AI Configs (managed prompt, parameters and default model) | ✅ Done, tested | `nimbus-assistant` (AgentControl config, separate from the flags above) |
 | Model menu per tier (selectable + greyed-out upsell models) | ✅ Done, tested live for each tier, including refused requests for locked models | `chat-tier-config` + `nimbus-assistant` default |
 | Web search (Open WebUI + Tavily), all tiers | ✅ Done, tested | `enable-web-search` |
@@ -182,7 +182,7 @@ flowchart TD
     Ctrl["Free Tier<br/>control arm"]:::variation
     Treat["Pro Tier<br/>treatment arm"]:::variation
     Click["Upgrade to Pro click<br/>/api/track-upgrade"]:::nimbus
-    Metric["clicked-upgrade metric<br/>experiment results"]:::ld
+    Metric["upgrade-interest metric<br/>experiment results"]:::ld
 
     Ctx --> Ind
     Ind -->|"yes · key = demo-pro"| Down
@@ -470,11 +470,37 @@ vs. Pro Tier, 50/50, among contexts that reach that rule (i.e. `tier` isn't
 experiment's variation set entirely (not just weighted low) — an earlier
 pass defaulted to a 3-way split across all of the flag's variations, which
 would have randomly routed a slice of free-tier traffic to the most
-expensive model. Primary metric: `clicked-upgrade` (Count/average-per-user,
+expensive model. Primary metric: `upgrade-interest`, built on the `clicked-upgrade` event (Count/average-per-user,
 which behaves like a conversion rate here since the UI's upgrade button only
 fires it once per account). `scripts/simulate-experiment.ts` generates
 synthetic free-tier sessions against it — real LD exposures and events, but
 documented as synthetic data since the app has no production audience.
+
+**Experiment result and decision (Iteration 1, Oct 3–5 2026).**
+Hypothesis: if free-tier users get the Pro models and context window, they
+click Upgrade more often, because the better experience raises perceived
+value. LaunchDarkly ran it as a frequentist A/B test with sequential testing,
+two-sided, significance level 0.05, on the `upgrade-interest` metric (event
+`clicked-upgrade`).
+
+| | Free Tier (control) | Pro Tier |
+|---|---|---|
+| Exposures | ~2,000 (50%) | ~2,000 (50%) |
+| Relative difference in upgrade clicks | — | **+202.86%** |
+| 95% confidence interval | — | +130.30% to +275.43% |
+
+4,001 contexts in total. The interval is entirely above zero, so Pro Tier is
+significantly better in the desired direction — LaunchDarkly's own takeaway
+says the same. The simulator was built with a 4% vs 11% click rate (+175%),
+which falls inside the interval, so the readout matches what went in.
+
+**Decision:** give free-tier users the Pro experience on the default rule.
+Because the data is synthetic, this shows how the decision would be made,
+not proof that real users behave this way; with real traffic the same
+readout is the trigger to ship. LaunchDarkly records Iteration 1's "shipped
+variation" as Free Tier only because the iteration was stopped to change
+the variation format for the model menu, not as an outcome. Iteration 2
+runs on the new format.
 
 **AI Config:** `nimbus-assistant`, an AgentControl config in Completion mode
 (not a flag, but evaluated the same way via `aiClient.completionConfig()`).
