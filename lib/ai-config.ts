@@ -2,9 +2,9 @@ import type { LDAICompletionConfigDefault } from '@launchdarkly/server-sdk-ai';
 
 /**
  * Must exist in your own LaunchDarkly environment as an AgentControl config
- * (completion mode) — see "Create the AI Config" in the README. This is a
- * separate concern from chat-tier-config: this controls the assistant's
- * prompt/temperature for everyone, not which model backend a tier gets.
+ * (completion mode) — see "Create the AI Config" in the README. Supplies the
+ * prompt/temperature for everyone; its model is only the default pick, and
+ * only for tiers whose chat-tier-config allows it (see resolveModel).
  */
 export const AI_CONFIG_KEY = 'nimbus-assistant';
 

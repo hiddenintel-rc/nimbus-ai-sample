@@ -41,7 +41,8 @@ Three design constraints have shaped every decision below:
 | Release & remediate (toggle a feature live, roll it back via a trigger) | ✅ Done, tested | `enable-conversation-memory` |
 | Targeting (rule-based + individual overrides) | ✅ Done, tested | `chat-tier-config` |
 | Experimentation (metric + experiment on the same flag) | ✅ Done, tested | `chat-tier-config` + `clicked-upgrade` metric |
-| AI Configs (managed prompt/parameter tuning) | ✅ Done, tested | `nimbus-assistant` (AgentControl config, separate from the flags above) |
+| AI Configs (managed prompt, parameters and default model) | ✅ Done, tested | `nimbus-assistant` (AgentControl config, separate from the flags above) |
+| Model menu per tier (selectable + greyed-out upsell models) | ✅ Built, type-checked; live per-tier test pending | `chat-tier-config` + `nimbus-assistant` default |
 | Web search (Open WebUI + Tavily), all tiers | ✅ Done, tested | `enable-web-search` |
 | Image generation, all tiers | ✅ Done. Prompt routes to Open WebUI's image API; a live call returned a PNG in about 50s | `enable-image-generation` |
 | Third-party integrations | ⏳ Parked, lowest priority — see "Known gaps" | — |
@@ -143,13 +144,14 @@ sequenceDiagram
     R->>SDK: enable-conversation-memory?
     SDK-->>R: on / off
     R->>SDK: chat-tier-config?
-    SDK-->>R: model · maxContextMessages · label
+    SDK-->>R: allowed models · maxContextMessages · label
     R->>SDK: nimbus-assistant AI Config?
-    SDK-->>R: system prompt · temperature
+    SDK-->>R: system prompt · temperature · default model
+    R->>R: Pick the model<br/>user's pick → AI Config model → tier default<br/>(each only if the tier allows it)
     R->>SDK: enable-web-search?
     SDK-->>R: on / off
     R->>R: Trim history<br/>memory off → last message only<br/>memory on → last N for this tier
-    R->>M: Chat completion<br/>(tier's model, AI Config prompt)
+    R->>M: Chat completion<br/>(picked model, AI Config prompt)
     opt Search flag on and the user's toggle on
         M->>M: Tavily search,<br/>results added to the context
     end
@@ -159,11 +161,12 @@ sequenceDiagram
 ```
 
 Every LaunchDarkly answer above comes from the SDK's in-memory copy of the
-rules, built from the session — never from anything the browser sends. Two
-systems, two jobs: `chat-tier-config` decides *which model and how much
-history* a tier is allowed (access control), while the `nimbus-assistant`
-AI Config decides *how the assistant talks* for everyone (prompt tuning) —
-see "Key decisions" below for why they're kept separate.
+rules, built from the session — never from anything the browser sends. The
+browser's model pick is only a request, checked against the tier's list.
+Two systems, two jobs: `chat-tier-config` decides *which models and how
+much history* a tier is allowed (access control), while the
+`nimbus-assistant` AI Config decides *how the assistant talks* and which
+allowed model is the default — see "Key decisions" below.
 
 ### 3. How `chat-tier-config` picks a tier — targeting and the experiment
 
@@ -410,14 +413,19 @@ granting more access than a tier's own public documentation already implies.
 
 **AI Config and chat-tier-config are two systems with two different jobs, not
 one duplicated.** `chat-tier-config` stays the access-control layer — which
-model backend and context length an account's *tier* is allowed. The new
-`nimbus-assistant` AI Config (LaunchDarkly's AgentControl product; the SDK
-still calls it `LDAIConfig`/`completionConfig`) controls the assistant's
-system prompt and `temperature` for every account regardless of tier —
-a product/prompt-tuning concern, not an access-control one. Its own `model`
-field exists because the schema requires one, but the app never reads it for
-routing, specifically so the two systems can't fight over which one decides
-the backend. Worth being explicit about what LaunchDarkly's AI Config
+models and context length an account's *tier* is allowed, plus which
+higher-tier models it sees greyed out. The `nimbus-assistant` AI Config
+(LaunchDarkly's AgentControl product; the SDK still calls it
+`LDAIConfig`/`completionConfig`) controls the assistant's system prompt and
+`temperature` for every account, and its `model` is the default pick. The
+two can't fight over the backend because of a fixed order in
+`lib/tier-config.ts#resolveModel`: the user's menu pick, then the AI
+Config's model, then the tier's `defaultModel` — and each one is used only
+if it's in the tier's `models` list. Changing the AI Config's model to
+Qwen 3.8 therefore moves Enterprise's default without a redeploy, while Free
+and Pro keep the 4B their plan allows. One trade-off: the AI Config tracker
+reports token usage under the config's variation, so replies from a model
+the user picked are counted there too. Worth being explicit about what LaunchDarkly's AI Config
 actually is here: it does not host or run any model — it only serves
 *configuration* (prompt text, parameters) the same way a regular flag serves
 a value. The real inference call, and whatever credentials it requires, is
@@ -460,7 +468,7 @@ documents "Node 20+" as an ordinary prerequisite.
 | `new-logo` | boolean | yes (needs the live swap) | Gates the redesigned cloud + wordmark logo (`components/Logo.tsx`) vs. the original plain text wordmark, via `components/BrandLogo.tsx`. A second, independent example of the release/remediate pattern — applied to a brand/visual rollout instead of a product feature, which is a genuinely common real-world use of flags. Defaults to the new logo if the flag is missing. |
 | `enable-web-search` | boolean | yes (shows/hides the toggle live) | Kill switch + entitlement for web search. `/api/chat` only adds Open WebUI's `features.web_search` when this flag is on for the context, the user's toggle asked for it, and the provider is local — the browser can request search but never force it. Serves `true` to every tier for the demo; a `tier` rule would restrict it in a live product. |
 | `enable-image-generation` | boolean | yes (shows/hides the toggle live) | Kill switch for image generation. When the flag is on, the user's toggle is on, and the provider is local, `/api/chat` sends that turn's prompt to Open WebUI `POST /api/v1/images/generations` instead of the chat model. The returned file is fetched server-side and shown in the thread. Serves `true` to every tier for the demo. Editing a previous image is not wired yet. |
-| `chat-tier-config` | JSON (3 variations: `free` / `pro` / `enterprise`) | no (server-only) | Targeting demo. Each variation is `{ model, maxContextMessages, label }`. Rule-based on the context's `tier` attribute; one individual target (`demo-pro` → `free`, a downgrade). Its Default rule also hosts the experiment below. |
+| `chat-tier-config` | JSON (3 variations: `free` / `pro` / `enterprise`) | yes (the model menu updates live; the server re-checks every request) | Targeting demo. Each variation is `{ label, maxContextMessages, defaultModel, models, lockedModels }`: Free selects the 4B; Pro the 4B and the 4B long-context; Enterprise those plus Coder-30B and Qwen 3.8-27B. `lockedModels` are shown disabled with the plan that unlocks them and are never accepted by `/api/chat`. Malformed or older single-model values fall back safely (`normalizeTierConfig`). Rule-based on the context's `tier` attribute; one individual target (`demo-pro` → `free`, a downgrade). Its Default rule also hosts the experiment below. |
 
 Context sent to LaunchDarkly: `{ kind: "user", key: <demo account id>, email,
 tier, accountAgeDays }`, built in `lib/ld-server.ts#buildUserContext` from the
@@ -484,9 +492,10 @@ documented as synthetic data since the app has no production audience.
 (not a flag, but evaluated the same way via `aiClient.completionConfig()`).
 One variation: a custom-registered model entry (`Qwen3.5-4B (Self Hosted)`,
 $0 token costs — accurate, since it's self-hosted) with a `temperature`
-parameter, plus a system-message prompt. Both the prompt and temperature are
-re-fetched from LaunchDarkly on every chat request and passed straight into
-the real inference call — confirmed live by editing the prompt in the
+parameter, plus a system-message prompt. The prompt, temperature and model
+are re-fetched from LaunchDarkly on every chat request; the prompt and
+temperature go straight into the inference call, and the model becomes the
+default pick for tiers that allow it — confirmed live by editing the prompt in the
 dashboard mid-session and watching the very next response change tone with
 no redeploy. Wrapped in `aiConfig.createTracker().trackMetricsOf()` so token
 usage, success, and duration report back to LaunchDarkly automatically.

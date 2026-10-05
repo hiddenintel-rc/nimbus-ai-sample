@@ -6,10 +6,42 @@ import MemoryStatusBadge from "@/components/MemoryStatusBadge";
 import UpgradeCta from "@/components/UpgradeCta";
 import { auth } from "@/lib/auth";
 import { logoutAction } from "@/lib/auth-actions";
-import { buildUserContext } from "@/lib/ld-server";
+import { AI_CONFIG_KEY, DEFAULT_AI_CONFIG } from "@/lib/ai-config";
+import { buildUserContext, getAiClient, getLDClient } from "@/lib/ld-server";
+import { DEFAULT_TIER_CONFIG, normalizeTierConfig, type TierConfig } from "@/lib/tier-config";
+
+/**
+ * Same evaluation /api/chat does, so the model menu is right on first paint.
+ * The client SDK takes over from here when chat-tier-config is available to
+ * client-side SDKs; the server still re-checks every request.
+ */
+async function loadChatSettings(
+  user: Parameters<typeof buildUserContext>[0],
+): Promise<{ tierConfig: TierConfig; aiDefaultModel?: string }> {
+  try {
+    const context = buildUserContext(user);
+    const client = await getLDClient();
+    const tierConfig = normalizeTierConfig(
+      await client.variation("chat-tier-config", context, DEFAULT_TIER_CONFIG),
+    );
+    const aiConfig = await (await getAiClient()).completionConfig(
+      AI_CONFIG_KEY,
+      context,
+      DEFAULT_AI_CONFIG,
+    );
+    return {
+      tierConfig,
+      aiDefaultModel: aiConfig.enabled ? aiConfig.model?.name : undefined,
+    };
+  } catch (error) {
+    console.error("[page] LaunchDarkly evaluation failed", error);
+    return { tierConfig: DEFAULT_TIER_CONFIG };
+  }
+}
 
 export default async function Home() {
   const session = await auth();
+  const chatSettings = session?.user ? await loadChatSettings(session.user) : undefined;
 
   return (
     <div className="flex min-h-full flex-1 flex-col bg-zinc-50 font-sans dark:bg-black">
@@ -78,7 +110,10 @@ export default async function Home() {
           </div>
           {session?.user ? (
             <>
-              <ChatPanel />
+              <ChatPanel
+                initialTierConfig={chatSettings?.tierConfig ?? DEFAULT_TIER_CONFIG}
+                aiDefaultModel={chatSettings?.aiDefaultModel}
+              />
               {session.user.tier === "free" && <UpgradeCta />}
             </>
           ) : (

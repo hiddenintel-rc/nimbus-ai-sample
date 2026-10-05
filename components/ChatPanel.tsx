@@ -1,10 +1,11 @@
 'use client';
 
-import { useState, type FormEvent } from 'react';
+import { useMemo, useState, type FormEvent } from 'react';
 import { useFlags } from 'launchdarkly-react-client-sdk';
 import MessageContent, { type Citation } from '@/components/MessageContent';
+import { normalizeTierConfig, resolveModel, type TierConfig } from '@/lib/tier-config';
 
-type ServedBy = { model: string; label: string };
+type ServedBy = { model: string; modelLabel: string; label: string };
 type GeneratedImage = { src: string; alt: string };
 type Message = {
   role: 'user' | 'assistant';
@@ -16,8 +17,17 @@ type Message = {
   citations?: Citation[];
 };
 
-export default function ChatPanel() {
+export default function ChatPanel({
+  initialTierConfig,
+  aiDefaultModel,
+}: {
+  initialTierConfig: TierConfig;
+  aiDefaultModel?: string;
+}) {
   const [messages, setMessages] = useState<Message[]>([]);
+  const [modelChoice, setModelChoice] = useState<string | null>(null);
+  const [lastServedModel, setLastServedModel] = useState<string | null>(null);
+  const [switchingModel, setSwitchingModel] = useState<string | null>(null);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -34,6 +44,19 @@ export default function ChatPanel() {
   const searchRequested = webSearchAvailable && webSearch && !(imageGenerationAvailable && imageGeneration);
   const imageRequested = imageGenerationAvailable && imageGeneration;
 
+  // Until chat-tier-config is available to client-side SDKs, the flag is
+  // missing here and the server-rendered value is used (no live updates).
+  const liveTierConfig: unknown = flags['chat-tier-config'];
+  const tierConfig = useMemo(
+    () => (liveTierConfig === undefined ? initialTierConfig : normalizeTierConfig(liveTierConfig)),
+    [liveTierConfig, initialTierConfig],
+  );
+  // A pick the tier no longer allows (flag edit, plan change) is dropped, so
+  // the menu falls back to the default instead of showing a locked model.
+  const allowedChoice =
+    modelChoice && tierConfig.models.some((model) => model.id === modelChoice) ? modelChoice : null;
+  const selectedModel = resolveModel(tierConfig, allowedChoice ?? lastServedModel, aiDefaultModel);
+
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     const trimmed = input.trim();
@@ -45,6 +68,12 @@ export default function ChatPanel() {
     setIsLoading(true);
     setSearching(searchRequested);
     setGeneratingImage(imageRequested);
+    // The home lab keeps one model loaded at a time, so a different model
+    // (or a slow one on the first message) means a reload before it answers.
+    const needsLoad =
+      !imageRequested &&
+      (lastServedModel ? selectedModel.id !== lastServedModel : Boolean(selectedModel.slow));
+    setSwitchingModel(needsLoad ? selectedModel.label : null);
     setError(null);
 
     try {
@@ -55,12 +84,16 @@ export default function ChatPanel() {
           messages: nextMessages,
           webSearch: searchRequested,
           imageGeneration: imageRequested,
+          // Only an explicit pick is sent; otherwise the server applies the
+          // AI Config's model (if this tier allows it) or the tier default.
+          model: allowedChoice,
         }),
       });
       const data = await response.json();
       if (!response.ok) {
         throw new Error(data.error ?? 'Something went wrong.');
       }
+      if (data.servedBy?.model) setLastServedModel(data.servedBy.model);
       setMessages((prev) => [
         ...prev,
         {
@@ -130,7 +163,8 @@ export default function ChatPanel() {
                 ) : (
                   message.servedBy && (
                     <>
-                      served by {message.servedBy.model} &middot; {message.servedBy.label} config
+                      served by {message.servedBy.modelLabel ?? message.servedBy.model} &middot;{' '}
+                      {message.servedBy.label} config
                       {message.webSearch && <> &middot; searched the web</>}
                     </>
                   )
@@ -141,7 +175,13 @@ export default function ChatPanel() {
         ))}
         {isLoading && (
           <div className="self-start rounded-xl bg-zinc-100 px-3 py-2 text-sm text-zinc-500 dark:bg-zinc-900 dark:text-zinc-500">
-            {generatingImage ? 'Generating an image…' : searching ? 'Searching the web…' : 'Thinking…'}
+            {generatingImage
+              ? 'Generating an image…'
+              : switchingModel
+                ? `Loading ${switchingModel}… the first reply can take a while.`
+                : searching
+                  ? 'Searching the web…'
+                  : 'Thinking…'}
           </div>
         )}
       </div>
@@ -165,6 +205,28 @@ export default function ChatPanel() {
       </form>
 
       <div className="flex flex-wrap gap-2">
+        {/* Locked models are listed but disabled, so each plan can see what
+            the next one adds. The server rejects them regardless. */}
+        <select
+          aria-label="Model"
+          value={selectedModel.id}
+          onChange={(event) => setModelChoice(event.target.value)}
+          disabled={imageRequested}
+          title={imageRequested ? 'Image generation does not use the chat model' : undefined}
+          className="self-start rounded-full border border-black/[.1] bg-white px-3 py-1 text-xs font-medium text-zinc-600 hover:border-black/[.3] disabled:opacity-50 dark:border-white/[.145] dark:bg-zinc-950 dark:text-zinc-400"
+        >
+          {tierConfig.models.map((model) => (
+            <option key={model.id} value={model.id}>
+              Model: {model.label}
+              {model.slow ? ' (slower to load)' : ''}
+            </option>
+          ))}
+          {tierConfig.lockedModels.map((model) => (
+            <option key={model.id} value={model.id} disabled>
+              {model.label} &mdash; {model.requiredTier}
+            </option>
+          ))}
+        </select>
         {imageGenerationAvailable && (
           <button
             type="button"

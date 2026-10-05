@@ -72,9 +72,12 @@ didn't set it up yourself.
   simulator for generating sample data
 - Login gating, with the actual enforcement server-side, not just a hidden
   UI element
-- A LaunchDarkly AI Config managing the assistant's prompt and temperature —
-  a separate concern from tier-based model routing, both live-editable with
-  no redeploy
+- A model menu per tier: Free gets the 4B, Pro adds the long-context 4B,
+  and Enterprise adds Coder-30B and Qwen 3.8. Higher-tier models are shown
+  greyed out, and the server rejects any model the tier doesn't allow
+- A LaunchDarkly AI Config managing the assistant's prompt, temperature and
+  default model (within what the tier allows), all live-editable with no
+  redeploy
 - A flag-gated "Generate an image" toggle. When it's on, that turn's prompt
   is sent to Open WebUI's image API instead of the chat model, and the
   picture is shown in the thread
@@ -386,27 +389,69 @@ Flip the flag **Off** and the toggle disappears without a reload.
 
 #### `chat-tier-config` — JSON
 
-Controls which model and how much conversation history each account's tier
-gets.
+Controls which models each account's tier can pick from the chat's model
+menu, which ones it sees greyed out as an upsell, and how much conversation
+history it gets.
 
 1. **Create flag** → Name: `Chat Tier Config`, Key: `chat-tier-config`,
-   Type: **JSON**. Leave "Available on client-side SDKs" **off** — this one
-   is only ever evaluated server-side.
-2. On the **Variations** tab, define three variations (adjust the `model`
-   values if you're on Groq — see above):
+   Type: **JSON**. Turn on **"Available on client-side SDKs"** — the model
+   menu reads it live. Without it the menu still works, but only picks up
+   flag changes on a page reload. The server re-checks every request either
+   way, so a greyed-out model can never be used by editing the request.
+2. On the **Variations** tab, define three variations. `models` are the
+   selectable entries (each `id` is a model ID on your backend — adjust them
+   if you're on Groq, see above); `lockedModels` are shown disabled with the
+   plan that unlocks them; `slow: true` marks a model the backend has to
+   load first, so the chat says so instead of just "Thinking…":
 
    ```json
    // "Free Tier"
-   { "model": "Qwen3.5-4B", "maxContextMessages": 4, "label": "Free" }
+   {
+     "label": "Free",
+     "maxContextMessages": 4,
+     "defaultModel": "Qwen3.5-4B",
+     "models": [{ "id": "Qwen3.5-4B", "label": "Qwen 4B" }],
+     "lockedModels": [
+       { "id": "Qwen3.5-4B-128k", "label": "Qwen 4B · long context", "requiredTier": "Pro" },
+       { "id": "Qwen3-Coder-30B-A3B-Instruct-UD-Q4_K_XL", "label": "Qwen Coder 30B", "requiredTier": "Enterprise" },
+       { "id": "Qwen3.8-27B-UD-Q3_K_XL", "label": "Qwen 3.8 27B", "requiredTier": "Enterprise" }
+     ]
+   }
    ```
    ```json
    // "Pro Tier"
-   { "model": "Qwen3.5-4B-128k", "maxContextMessages": 20, "label": "Pro" }
+   {
+     "label": "Pro",
+     "maxContextMessages": 20,
+     "defaultModel": "Qwen3.5-4B",
+     "models": [
+       { "id": "Qwen3.5-4B", "label": "Qwen 4B" },
+       { "id": "Qwen3.5-4B-128k", "label": "Qwen 4B · long context", "slow": true }
+     ],
+     "lockedModels": [
+       { "id": "Qwen3-Coder-30B-A3B-Instruct-UD-Q4_K_XL", "label": "Qwen Coder 30B", "requiredTier": "Enterprise" },
+       { "id": "Qwen3.8-27B-UD-Q3_K_XL", "label": "Qwen 3.8 27B", "requiredTier": "Enterprise" }
+     ]
+   }
    ```
    ```json
    // "Enterprise Tier"
-   { "model": "Qwen3-Coder-30B-A3B-Instruct-UD-Q4_K_XL", "maxContextMessages": 50, "label": "Enterprise" }
+   {
+     "label": "Enterprise",
+     "maxContextMessages": 50,
+     "defaultModel": "Qwen3.5-4B",
+     "models": [
+       { "id": "Qwen3.5-4B", "label": "Qwen 4B" },
+       { "id": "Qwen3.5-4B-128k", "label": "Qwen 4B · long context", "slow": true },
+       { "id": "Qwen3-Coder-30B-A3B-Instruct-UD-Q4_K_XL", "label": "Qwen Coder 30B", "slow": true },
+       { "id": "Qwen3.8-27B-UD-Q3_K_XL", "label": "Qwen 3.8 27B", "slow": true }
+     ],
+     "lockedModels": []
+   }
    ```
+
+   The older single-model shape (`{ "model": "…", "maxContextMessages": 4,
+   "label": "Free" }`) is still accepted, as a one-entry menu.
 3. On the **Targeting** tab, add two custom rules (order between them
    doesn't matter, since `tier` only ever holds one value):
    - If `tier` is one of `pro` → serve **Pro Tier**
@@ -419,11 +464,13 @@ gets.
 6. Toggle the flag **On**.
 
 **Try it:** log in as each demo account (`demo-free`, `demo-pro`,
-`demo-enterprise` — see `lib/demo-users.ts`) and send a
-message — the reply shows a "served by …" caption naming the actual
-model/config used. `demo-free` and `demo-enterprise` should match their
-tier; `demo-pro` should show **Free**, not Pro, because of the individual
-override.
+`demo-enterprise` — see `lib/demo-users.ts`) and open the model menu next
+to the chat's toggles. Free has one model and three greyed out, Pro can
+switch between the two 4B models, and Enterprise can pick all four. Each
+reply's "served by …" caption names the model and tier config that
+answered. `demo-pro` should show the **Free** menu, not Pro, because of the
+individual override. Switching to a different model makes the first reply
+slow on a single-GPU home lab, which keeps one model loaded at a time.
 
 #### Experiment + metric (optional, for the Experimentation extra layer)
 
@@ -444,7 +491,9 @@ clearly synthetic data, not real usage.
 This is a separate LaunchDarkly product (branded **AgentControl** in the
 dashboard, under **Agents** in the left sidebar) from the flags above — it's
 not under Features. It controls the assistant's prompt and temperature for
-every account, independent of tier.
+every account, and its model is the default selection in the model menu —
+but only for tiers whose `chat-tier-config` allows that model. A user's own
+pick from the menu wins.
 
 1. **Agents → Configs → Create config** → **Completion** mode. Name:
    `Nimbus Assistant`, Key: `nimbus-assistant` (must match exactly).
@@ -453,9 +502,11 @@ every account, independent of tier.
      one (adjust to match whatever you set `LOCAL_AI_BASE_URL`'s model names
      to, or your Groq model if using Groq): Name `Qwen3.5-4B (Self Hosted)`,
      Model ID `Qwen3.5-4B`, Input/output token cost `$0` (accurate for a
-     self-hosted model). This registration is just metadata for LaunchDarkly's
-     own cost tracking — the app never reads this model field to decide
-     which backend to call; that's still `chat-tier-config`'s job.
+     self-hosted model). The **Model ID** must match one of the `id`s in
+     `chat-tier-config` — the app uses it as the default model for any tier
+     that allows it, and falls back to the tier's `defaultModel` otherwise.
+     Register the other models the same way if you want to switch between
+     them here.
    - Add the parameter **temperature**, value `0.7` (or enter
      `{ "temperature": 0.7 }` if you're given a raw JSON box instead of a
      parameter picker).
@@ -468,7 +519,10 @@ every account, independent of tier.
 day." Then go back and edit the system message to something distinctive
 (e.g. "You are a pirate. Speak only in pirate slang.") and save. Ask again,
 same conversation — the very next reply should reflect the new prompt
-immediately, with no redeploy.
+immediately, with no redeploy. To change the model the same way, log in as
+`demo-enterprise`, leave the model menu untouched, and switch the config's
+model to `Qwen3.8-27B-UD-Q3_K_XL`: the next reply's caption shows Qwen 3.8.
+Free and Pro keep the 4B, because their tier doesn't allow that model.
 
 ### 5. Run it
 

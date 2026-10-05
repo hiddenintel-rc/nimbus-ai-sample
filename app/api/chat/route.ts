@@ -9,7 +9,7 @@ import {
 } from '@/lib/inference';
 import { getLDClient, getAiClient, buildUserContext } from '@/lib/ld-server';
 import { auth } from '@/lib/auth';
-import { DEFAULT_TIER_CONFIG, type TierConfig } from '@/lib/tier-config';
+import { DEFAULT_TIER_CONFIG, normalizeTierConfig, resolveModel } from '@/lib/tier-config';
 import { AI_CONFIG_KEY, DEFAULT_AI_CONFIG } from '@/lib/ai-config';
 import type { LDAIMetrics } from '@launchdarkly/server-sdk-ai';
 
@@ -72,11 +72,9 @@ export async function POST(request: Request) {
   // variations, and targeting. The default values passed here only cover
   // LaunchDarkly being briefly unreachable, not a missing/never-created flag.
   const memoryEnabled = await client.variation('enable-conversation-memory', context, false);
-  const tierConfig = (await client.variation(
-    'chat-tier-config',
-    context,
-    DEFAULT_TIER_CONFIG,
-  )) as TierConfig;
+  const tierConfig = normalizeTierConfig(
+    await client.variation('chat-tier-config', context, DEFAULT_TIER_CONFIG),
+  );
   const webSearchEnabled = await client.variation('enable-web-search', context, false);
   const imageGenerationEnabled = await client.variation('enable-image-generation', context, false);
 
@@ -109,13 +107,19 @@ export async function POST(request: Request) {
     }
   }
 
-  // AI Config (AgentControl) — a separate concern from chat-tier-config above.
-  // This one controls the assistant's prompt/temperature for every account;
-  // it never decides which model backend answers — that stays tier-driven.
+  // AI Config (AgentControl) supplies the prompt and temperature for every
+  // account, and its model becomes the default pick — but only when this
+  // tier's chat-tier-config allows that model. The user's own pick from the
+  // model menu wins, and is likewise ignored unless the tier allows it.
   // Must exist in your own LD environment — see "Create the AI Config" in
   // the README.
   const aiClient = await getAiClient();
   const aiConfig = await aiClient.completionConfig(AI_CONFIG_KEY, context, DEFAULT_AI_CONFIG);
+  const model = resolveModel(
+    tierConfig,
+    body?.model,
+    aiConfig.enabled ? aiConfig.model?.name : undefined,
+  );
 
   // With memory off (legacy behavior), only the latest message is sent —
   // every turn is treated as a fresh conversation, same as before that flag
@@ -143,13 +147,13 @@ export async function POST(request: Request) {
       ? await aiConfig
           .createTracker()
           .trackMetricsOf(toLDMetrics, () =>
-            chatCompletion(tierConfig.model, messages, { temperature, webSearch }),
+            chatCompletion(model.id, messages, { temperature, webSearch }),
           )
-      : await chatCompletion(tierConfig.model, messages, { temperature, webSearch });
+      : await chatCompletion(model.id, messages, { temperature, webSearch });
 
     return NextResponse.json({
       reply: result.reply,
-      servedBy: tierConfig,
+      servedBy: { model: model.id, modelLabel: model.label, label: tierConfig.label },
       webSearch,
       citations: result.citations ?? [],
     });
