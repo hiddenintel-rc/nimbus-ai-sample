@@ -11,8 +11,8 @@ export type DemoUser = {
 };
 
 // Every demo account shares one password, read from DEMO_PASSWORD in
-// .env.local and shared privately with reviewers — never committed, so the
-// chat (and the GPU behind it) stays limited to people who were given it.
+// .env.local — never committed, so the chat (and the GPU behind it) stays
+// limited to people the operator shares it with.
 let demoPasswordHash: string | null | undefined;
 
 function getDemoPasswordHash(): string | null {

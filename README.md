@@ -10,12 +10,11 @@ A deeper look at the architecture and the reasoning behind its design
 decisions lives in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), including
 diagrams of each data flow.
 
-## Quick start (you were given a working `.env.local`)
+## Quick start (with an existing `.env.local`)
 
-If you received this repo's link along with a ready-made `.env.local` file,
-that file already points at a live LaunchDarkly environment with the flags,
-targeting, and experiment below already configured — you don't need to set
-up anything on the LaunchDarkly side yourself.
+If you already have a `.env.local` for a LaunchDarkly environment where the
+flags, targeting, and experiment below are configured, this is all it takes.
+Starting from nothing? Skip to "Re-creating this independently" below.
 
 ```bash
 git clone https://github.com/hiddenintel-rc/nimbus-ai-sample.git
@@ -23,29 +22,28 @@ cd nimbus-ai-sample
 npm install
 ```
 
-Drop the `.env.local` file you were given into the project root (same folder
-as `package.json`), then:
+Put the `.env.local` file in the project root (same folder as
+`package.json`), then:
 
 ```bash
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) and log in with the
-demo account details you were given alongside the `.env.local` (one Free,
-one Pro, one Enterprise account; they share the password in
-`DEMO_PASSWORD`). Logins aren't published in this repo or on the login
-page, so the chat — and the hardware behind it — stays limited to people
-who were given access. Keep that `.env.local` private — don't commit it or
-forward it on; it's already excluded from git (see `.gitignore`), but that
-only protects you from committing it by accident, not from handing it to
-someone else yourself.
+Open [http://localhost:3000](http://localhost:3000) and log in as
+`demo-free@nimbus.app`, `demo-pro@nimbus.app` or
+`demo-enterprise@nimbus.app`. All three share the password in
+`DEMO_PASSWORD`, which isn't published in this repo or on the login page,
+so the chat — and the hardware behind it — stays limited to people you
+share it with. Keep `.env.local` private; `.gitignore` only stops you from
+committing it by accident.
 
 **What to try:**
-- Log in as each account and send a message — the reply shows a "served
-  by …" caption naming the actual model/context config used. `demo-free`
-  and `demo-enterprise` should match their tier; `demo-pro` intentionally
-  shows **Free**, not Pro (see "Individual targeting" in
-  `docs/ARCHITECTURE.md` for why).
+- Log in as each account, open the model menu next to the chat's toggles,
+  and send a message. Each reply shows a "served by …" caption naming the
+  model and tier config used. `demo-enterprise` gets the Enterprise menu;
+  `demo-pro` intentionally gets **Free** (see "Individual targeting" in
+  `docs/ARCHITECTURE.md`); `demo-free` reaches the experiment, so it gets
+  Free or Pro depending on its assigned arm.
 - With the "Memory" badge on, tell it "My name is Alex, remember that,"
   then ask "what's my name?" — it should recall it across turns.
 - As a free-tier account, the "Upgrade to Pro" button fires the conversion
@@ -67,7 +65,7 @@ didn't set it up yourself.
 - A feature flag that can be released, toggled live with no page reload,
   and rolled back via a remote trigger
 - Rule-based and individual targeting on a real context (tier +
-  account age) driving which model/context-window a request gets
+  account age) driving which models and history window an account gets
 - An experiment on that same flag, with a conversion metric and a traffic
   simulator for generating sample data
 - Login gating, with the actual enforcement server-side, not just a hidden
@@ -161,8 +159,8 @@ Three things that will bite you if you deploy this by hand instead:
 
 Once this is publicly reachable, the app's own login is what stands between
 the internet and the GPU: `/api/chat` checks the session and returns `401`
-regardless of what the UI shows. `DEMO_PASSWORD` should be chosen and shared
-accordingly — a long random value, given privately, not reused.
+regardless of what the UI shows. Make `DEMO_PASSWORD` a long random value
+that isn't reused anywhere else.
 
 This deployment also has a Cloudflare Access application on its hostname,
 configured as a regional Bypass policy: traffic from the permitted country
@@ -234,8 +232,8 @@ above is read from `.env.local` once it's off this machine.
 ## Re-creating this independently
 
 Everything below is for setting this up from zero — your own LaunchDarkly
-account and your own chat backend, with no files from anyone else. Skip this
-if the quick start above already worked for you.
+account and your own chat backend. Skip this if the quick start above
+already worked for you.
 
 ### What you'll need
 
@@ -281,16 +279,18 @@ Open `.env.local` and fill in:
 | `LOCAL_AI_BASE_URL`, `LOCAL_AI_API_KEY` | Only needed if `INFERENCE_PROVIDER=local`. Point `LOCAL_AI_BASE_URL` at your own OpenAI-compatible endpoint — its internal address if you're running alongside it (e.g. `http://open-webui:8080/api`), or a public hostname otherwise — and `LOCAL_AI_API_KEY` at whatever key/token that server expects. |
 | `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET` | Only needed if your `local` endpoint sits behind Cloudflare Access with a Service Auth policy. Leave blank otherwise, including when reaching it internally. |
 
-**If you're using Groq:** the model names baked into this repo's flag
-variations (below) are specific to a particular self-hosted setup and won't
-exist on Groq. When you create the `chat-tier-config` flag, swap the
-`model` field in each variation for a real Groq model ID (check
-[console.groq.com](https://console.groq.com) for the current list — e.g.
-a small/fast model for Free, a larger one for Pro and Enterprise).
+**If you're using Groq:** the model IDs in this repo's flag variations
+(below) are specific to a particular self-hosted setup and won't exist on
+Groq. When you create the `chat-tier-config` flag, replace every model `id`
+and `defaultModel` with real Groq model IDs (check
+[console.groq.com](https://console.groq.com) for the current list — e.g. a
+small/fast model for Free, larger ones for Pro and Enterprise), and use the
+same ID for the AI Config's model in step 4. Leave out `"slow": true`, since
+Groq doesn't load models on demand.
 
 ### 3. Re-create the LaunchDarkly flags
 
-This app reads four flags and sends one custom event (there's also a
+This app reads five flags and sends one custom event (there's also a
 separate AI Config, covered in step 4). All of these need to exist in your
 own LD environment — they are not created automatically.
 
@@ -463,6 +463,11 @@ history it gets.
    upgrading a Free one — see `docs/ARCHITECTURE.md` for why.
 6. Toggle the flag **On**.
 
+If you change these variations on a deployment that's still running an
+older build of this app, keep a `"model"` field in each one (the tier's
+single model, as before) until the new build is live — older builds read
+only that field, and newer ones ignore it.
+
 **Try it:** log in as each demo account (`demo-free`, `demo-pro`,
 `demo-enterprise` — see `lib/demo-users.ts`) and open the model menu next
 to the chat's toggles. Free has one model and three greyed out, Pro can
@@ -472,7 +477,7 @@ answered. `demo-pro` should show the **Free** menu, not Pro, because of the
 individual override. Switching to a different model makes the first reply
 slow on a single-GPU home lab, which keeps one model loaded at a time.
 
-#### Experiment + metric (optional, for the Experimentation extra layer)
+#### Experiment + metric (optional)
 
 If you also want to reproduce the experiment: create a metric (any
 "+ Create" menu → Metric) named e.g. `Upgrade click`, Event key

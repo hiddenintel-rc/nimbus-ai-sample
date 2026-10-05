@@ -1,7 +1,8 @@
 # Architecture & Decisions
 
 Status snapshot as of this document: **release/remediate, targeting,
-experimentation, AI Configs, and flag-gated web search are complete.**
+experimentation, AI Configs, per-tier model menus, and flag-gated web search
+are complete.**
 Flag-gated image generation is implemented and a live call returned a PNG.
 When the toggle is on, that turn's prompt goes to Open WebUI's image API,
 which paints it with ComfyUI and stores the file. Nimbus downloads that
@@ -13,8 +14,8 @@ everything except chat works. Both read the same LaunchDarkly environment, so
 one dashboard change moves both. See "Deployments" below for why the split
 exists.
 Third-party integrations are not yet built. This file exists so the build
-can be picked back up, reviewed, or handed off without re-deriving the
-reasoning behind it.
+can be picked back up or handed off without re-deriving the reasoning
+behind it.
 
 ## What this app is
 
@@ -30,8 +31,8 @@ Three design constraints have shaped every decision below:
 1. **Zero ongoing cost** — the operator didn't want to pay to run this.
 2. **No security regression** — nothing here should weaken the operator's
    existing home-lab security posture (see "Cloudflare isolation" below).
-3. **A stranger can run it** — a reviewer should be able to clone the repo and
-   get the app running without needing the operator's personal infrastructure,
+3. **A stranger can run it** — anyone should be able to clone the repo and
+   get the app running without needing the operator's own infrastructure,
    even though the *deployed* instance depends on it (see "Known gaps").
 
 ## Status
@@ -42,7 +43,7 @@ Three design constraints have shaped every decision below:
 | Targeting (rule-based + individual overrides) | ✅ Done, tested | `chat-tier-config` |
 | Experimentation (metric + experiment on the same flag) | ✅ Done, tested | `chat-tier-config` + `clicked-upgrade` metric |
 | AI Configs (managed prompt, parameters and default model) | ✅ Done, tested | `nimbus-assistant` (AgentControl config, separate from the flags above) |
-| Model menu per tier (selectable + greyed-out upsell models) | ✅ Built, type-checked; live per-tier test pending | `chat-tier-config` + `nimbus-assistant` default |
+| Model menu per tier (selectable + greyed-out upsell models) | ✅ Done, tested live for each tier, including refused requests for locked models | `chat-tier-config` + `nimbus-assistant` default |
 | Web search (Open WebUI + Tavily), all tiers | ✅ Done, tested | `enable-web-search` |
 | Image generation, all tiers | ✅ Done. Prompt routes to Open WebUI's image API; a live call returned a PNG in about 50s | `enable-image-generation` |
 | Third-party integrations | ⏳ Parked, lowest priority — see "Known gaps" | — |
@@ -55,13 +56,6 @@ Three design constraints have shaped every decision below:
 Four small diagrams, each answering one question, instead of one diagram
 that tries to show everything. Start with the big picture; the other three
 zoom into one flow each.
-
-Prefer images? Each diagram is also in [`docs/diagrams/`](diagrams/) as a
-white-background PNG, with its title and legend included:
-[overview](diagrams/architecture-1-overview.png) ·
-[chat request](diagrams/architecture-2-chat-request.png) ·
-[tier targeting](diagrams/architecture-3-tier-targeting.png) ·
-[live updates](diagrams/architecture-4-live-updates.png).
 
 **Legend** (used in every flowchart below):
 
@@ -97,7 +91,7 @@ flowchart TB
     LD -->|"live flag values,<br/>no page reload"| Visitor
     LD <-->|"rules stream in,<br/>events and metrics go out"| App
     Visitor -->|"log in, send a chat"| App
-    App -->|"chat completion with the<br/>model + prompt the flags picked"| Models
+    App -->|"chat completion with a model<br/>the tier allows + the AI Config prompt"| Models
     App -.->|"only if INFERENCE_PROVIDER=groq"| Groq
     Models -->|"web search, when<br/>flag + toggle allow"| Tavily
 
@@ -115,7 +109,8 @@ Two LaunchDarkly SDKs are deliberately both in play, with different jobs:
   evaluates them locally, so a chat request never waits on a round trip to
   LaunchDarkly; analytics events and AI metrics are sent back in batches.
 - **Client SDK (in the browser)** only drives display: the live "Memory:
-  On/Off" badge and the logo swap. It identifies as the same logged-in user
+  On/Off" badge, the logo swap, whether the web search and image toggles
+  are offered, and the model menu. It identifies as the same logged-in user
   the server evaluates for, but nothing it says is trusted for access
   decisions — the server re-checks everything itself.
 
@@ -207,7 +202,7 @@ flowchart TD
 ```
 
 Each outlined box is one of the flag's three JSON variations,
-`{ model, maxContextMessages, label }`. LaunchDarkly checks individual
+`{ label, maxContextMessages, defaultModel, models, lockedModels }`. LaunchDarkly checks individual
 targets before rules, which is why `demo-pro` lands on Free despite its
 `pro` tier. Enterprise Tier is deliberately left out of the experiment so
 free-tier traffic can never be randomly routed to the most expensive model.
@@ -244,12 +239,14 @@ next chat reply reflects it, with no redeploy.
 | Piece | File(s) |
 |---|---|
 | Landing page, header, badges | `app/page.tsx`, `components/BrandLogo.tsx`, `components/MemoryStatusBadge.tsx` |
-| Chat UI | `components/ChatPanel.tsx` |
+| Chat UI, model menu | `components/ChatPanel.tsx` |
+| Tier config shape, validation, model choice | `lib/tier-config.ts` |
 | Client SDK setup + user identify | `components/LDClientProvider.tsx`, `components/LDUserSync.tsx`, `app/layout.tsx` |
 | Login (3 static demo accounts) | `app/login/page.tsx`, `lib/auth.ts`, `lib/demo-users.ts` |
 | Chat request handling | `app/api/chat/route.ts` |
 | Server SDK + context builder | `lib/ld-server.ts` |
 | Fallback values if LD is unreachable | `lib/tier-config.ts`, `lib/ai-config.ts` |
+| Server-side first render of the model menu | `app/page.tsx` |
 | Model backend switch (self-hosted / Groq) | `lib/inference.ts` |
 | Upgrade click → conversion metric | `components/UpgradeCta.tsx`, `app/api/track-upgrade/route.ts` |
 | Synthetic experiment traffic | `scripts/simulate-experiment.ts` |
@@ -257,9 +254,12 @@ next chat reply reflects it, with no redeploy.
 
 The home-lab side of the model backend (Cloudflare Tunnel → Access with a
 Service-Auth-only policy → Open WebUI's API → llama.cpp router serving
-`Qwen3.5-4B`, `Qwen3.5-4B-128k` and `Qwen3-Coder-30B`) is deliberately kept
-out of the diagrams; why it's shaped that way is covered under "Cloudflare
-isolation" below.
+`Qwen3.5-4B`, `Qwen3.5-4B-128k`, `Qwen3-Coder-30B-A3B-Instruct-UD-Q4_K_XL` and
+`Qwen3.8-27B-UD-Q3_K_XL`) is deliberately kept out of the diagrams; why it's
+shaped that way is covered under "Cloudflare isolation" below. The router
+keeps one model loaded at a time on a single GPU, so the first reply after
+switching models waits for a reload (about 17s for Coder-30B and 29s for
+Qwen 3.8 in testing); the chat says so instead of just "Thinking…".
 
 ## Deployments
 
@@ -338,17 +338,15 @@ self-hosted where no such cap exists and ComfyUI may need a cold start.
 
 ## Key decisions
 
-**Fresh project instead of an existing one.** Three personal projects were
-considered and ruled out: an Open WebUI deployment (no custom app code to
-flag), a retro-game cabinet (explicitly marked "do not publish," plus ROM
-copyright exposure), and a Jellyfin media vault (real household infra, heavy
-Docker/DB dependency chain for a reviewer to stand up). Building fresh avoided
-forcing a LaunchDarkly demo into something it didn't fit.
+**Fresh project instead of an existing one.** Building a small app from
+scratch avoided forcing a LaunchDarkly demo into an existing project it
+didn't fit.
 
 **Local-hosted models as the primary backend, Groq as a manual fallback only.**
-The operator already runs a llama.cpp router with three usable models
-(`Qwen3.5-4B`, `Qwen3.5-4B-128k`, `Qwen3-Coder-30B-A3B-Instruct-UD-Q4_K_XL`) —
-using them costs nothing and maps naturally onto Free/Pro/Enterprise. Groq's
+The operator already runs a llama.cpp router with four usable models (listed
+under "Where each piece lives" above) — using them costs nothing and maps
+naturally onto Free/Pro/Enterprise, each tier adding models to the one below
+it. Groq's
 code path (`lib/inference.ts`) is fully implemented but never exercised by
 default, and is switched on only via `INFERENCE_PROVIDER=groq` — deliberately
 not an automatic failover, so a background process (like the eventual
@@ -363,9 +361,9 @@ the root app didn't satisfy the new one, and Open WebUI's own background
 JSON — a reload loop. The fix was a **second, fully separate hostname**
 (`nimbus-api.<domain>`) on the same tunnel, pointed at the same origin, with
 its own Access application carrying exactly one policy: **Service Auth**, no
-human login path at all. This also respects a rule already documented in the
-operator's own Local AI repo — never tunnel llama.cpp's port directly — since
-this still only ever reaches it through Open WebUI's API.
+human login path at all. This also respects a standing rule for the
+backend — never tunnel llama.cpp's port directly — since this still only
+ever reaches it through Open WebUI's API.
 
 That dedicated hostname existed so an *externally hosted* app could reach the
 backend. Now that the working deployment runs on the same host and talks to
@@ -391,8 +389,8 @@ the session itself and returns `401` — enforcement lives server-side, not in
 whether the UI happens to show a button. The demo logins used to be printed
 on the login page and in the README; both were removed, and the shared
 password moved out of the source into `DEMO_PASSWORD` in `.env.local`, which
-reviewers receive privately. A login gate whose password is public in the repo
-gates nothing.
+is never committed. A login gate whose password is public in the repo gates
+nothing.
 
 This matters more, not less, now that the self-hosted instance is publicly
 reachable and its Cloudflare Access application is configured as a regional
@@ -443,21 +441,11 @@ AI Config's own `tracker.trackMetricsOf()` to report real token/latency/
 success metrics back to LaunchDarkly — same outcome, zero new dependency
 conflicts.
 
-**Closed-group review via a privately shared `.env.local`, not public self-service.**
-The README leads with "clone the repo, drop in the `.env.local` you were
-given, run it" rather than "set up your own LaunchDarkly account and model
-backend." The real LD environment (with the flags, targeting, and experiment
-already configured) and a working inference backend are shared directly with
-reviewers outside the repo, not published. The from-scratch setup
-instructions still exist in the README as a secondary path, both for
-transparency into how it works and for anyone who genuinely wants to
-reproduce it independently — but they're not the primary flow.
-
-**Project-local Node 22, not a system upgrade.** The dev machine's system Node
-(18.19.1) is older than what Next.js 16 / Tailwind v4 require. Rather than
-touch the operator's system Node, a Node 22 binary lives at `.tools/node/`
-(gitignored, never committed) — invisible to the shipped repo, which simply
-documents "Node 20+" as an ordinary prerequisite.
+**The live environment's credentials stay out of the repo.** The README has
+two paths: a short quick start for someone who already has a configured
+`.env.local`, and full from-scratch instructions for setting up your own
+LaunchDarkly environment and model backend. The configured environment and
+the backend credentials are never published.
 
 ## Flag and AI Config inventory
 
@@ -513,8 +501,12 @@ usage, success, and duration report back to LaunchDarkly automatically.
   so some citations link to a site section, not the exact story.
 - **Image generation needs two extra API paths.** Endpoint restrictions stay on. The allowlist is `/api/chat/completions`, `/api/v1/models`, `/api/v1/images/generations`, and `/api/v1/files`. The last two are what let Nimbus ask for a picture and download the stored PNG. A direct call with the prompt "a single red circle on a white background" returned a PNG data URL in about 50 seconds.
 - **Groq path is implemented but untested.** It type-checks and follows the
-  same interface as the local path, but no live request has gone through it.
-- **Integrations (optional extra credit) parked, not abandoned.** Researched
+  same interface as the local path, but no live request has gone through it,
+  and the flag's model IDs would need swapping for Groq ones (see the README).
+- **AI metrics are attributed to the AI Config's model.** When a user picks
+  a different model from the menu, its token usage is still reported under
+  `nimbus-assistant`'s variation.
+- **Integrations parked, not abandoned.** Researched
   GitHub Code References as the best fit — it would link each flag/config
   key directly to the exact lines using it in this repo. Found a real
   constraint before building anything: LaunchDarkly's dashboard-integrated
