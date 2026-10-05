@@ -25,11 +25,8 @@
 .DS_Store
 *.pem
 
-# local screenshots (kept for your own reference, not part of the project)
+# local screenshots
 Screenshot*.png
-
-# personal notes, not part of the project
-/LD-AI-Settings
 
 # debug
 npm-debug.log*
@@ -50,6 +47,3 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
-
-# personal demo prep notes (local only)
-DEMO-GUIDE.md

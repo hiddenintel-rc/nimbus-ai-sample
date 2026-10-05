@@ -12,7 +12,7 @@ export default async function LoginPage({
       <div className="w-full max-w-sm rounded-2xl border border-black/[.08] bg-white p-8 dark:border-white/[.145] dark:bg-zinc-950">
         <h1 className="text-xl font-semibold text-black dark:text-zinc-50">Log in to Nimbus</h1>
         <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-          Sign in with the demo account you were given.
+          Sign in with a demo account.
         </p>
 
         {error && (
