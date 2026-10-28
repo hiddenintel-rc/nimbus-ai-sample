@@ -18,11 +18,28 @@ function getSdkKey(): string {
 /**
  * Server-side LD client singleton. The SDK recommends initializing once at
  * startup and reusing the instance, not creating a new client per request.
+ *
+ * A failed or timed-out initialization resolves with the client anyway: the
+ * SDK keeps retrying the connection on its own, and `variation()` on a client
+ * that isn't ready returns the default value passed at the call site (or the
+ * last known one). Rejecting here would instead cache the rejection in
+ * `clientPromise` for the life of the process, so one blip would keep every
+ * later request failing long after LaunchDarkly came back.
  */
 export function getLDClient(): Promise<LDClient> {
   if (!clientPromise) {
     const client = init(getSdkKey());
-    clientPromise = client.waitForInitialization({ timeout: 10 }).then(() => client);
+    clientPromise = client
+      .waitForInitialization({ timeout: 10 })
+      .then(() => client)
+      .catch((error) => {
+        console.error(
+          '[LaunchDarkly] initialization did not complete — serving the fallback ' +
+            'values passed at each call site until it does',
+          error,
+        );
+        return client;
+      });
   }
   return clientPromise;
 }
@@ -41,7 +58,10 @@ export async function getAiClient(): Promise<LDAIClient> {
 
 /**
  * Builds the LD context for a logged-in demo user. `key` is what individual
- * targeting matches on; `tier` and `accountAgeDays` drive rule-based targeting.
+ * targeting matches on and `tier` is what the rules on `chat-tier-config`
+ * match on. `accountAgeDays` is sent so a second attribute is available to
+ * target on, but no rule uses it yet; it is there for a loyalty-style rule
+ * (e.g. accountAgeDays >= 365 serves a higher tier).
  */
 export function buildUserContext(user: {
   id: string;

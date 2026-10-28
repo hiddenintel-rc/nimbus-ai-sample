@@ -38,6 +38,23 @@ function isValidHistory(value: unknown): value is IncomingMessage[] {
 
 type ServedBy = { model: string; modelLabel: string; label: string };
 
+/**
+ * AI Config parameters are typed `unknown` and entered by hand in the
+ * dashboard, so a non-numeric `temperature` is dropped instead of being sent
+ * to the inference call — the same field-by-field fallback `normalizeTierConfig`
+ * applies to the tier flag. Letting it through would fail the whole request
+ * upstream, and the browser would only see "the backend is unreachable".
+ */
+function temperatureParameter(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    if (value !== undefined) {
+      console.error('[api/chat] ignoring non-numeric temperature from the AI Config:', value);
+    }
+    return undefined;
+  }
+  return value;
+}
+
 const KEEPALIVE_MS = 20_000;
 const encoder = new TextEncoder();
 
@@ -72,6 +89,21 @@ function recordMetrics(
     tracker.trackDuration(Date.now() - startedAt);
   } catch (error) {
     console.error('[api/chat] metrics', error);
+  }
+}
+
+/**
+ * The SDK holds events until its own flush interval, which a serverless
+ * instance can be frozen before reaching. Called once the reply has been
+ * delivered, so it costs the user nothing.
+ */
+async function flushMetrics(tracker: LDAIConfigTracker | null) {
+  if (!tracker) return;
+  try {
+    const client = await getLDClient();
+    await client.flush();
+  } catch (error) {
+    console.error('[api/chat] metrics flush', error);
   }
 }
 
@@ -167,7 +199,7 @@ export async function POST(request: Request) {
         ];
 
   const messages: ChatMessage[] = [...systemMessages, ...relevantHistory];
-  const temperature = aiConfig.model?.parameters?.temperature as number | undefined;
+  const temperature = temperatureParameter(aiConfig.model?.parameters?.temperature);
   const servedBy: ServedBy = { model: model.id, modelLabel: model.label, label: tierConfig.label };
   const tracker = aiConfig.enabled ? aiConfig.createTracker() : null;
   const startedAt = Date.now();
@@ -259,6 +291,7 @@ export async function POST(request: Request) {
         } catch {
           // Already closed by the client.
         }
+        await flushMetrics(tracker);
       }
     },
     cancel() {
