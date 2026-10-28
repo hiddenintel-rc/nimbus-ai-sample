@@ -479,6 +479,18 @@ on a value that could not be read — the opposite choice from `memoryEnabled`,
 which defaults to `false`, because withholding a feature is a smaller harm
 than refusing to answer at all.
 
+**Only the free plan is capped, deliberately.** Pro and Enterprise omit
+`maxMessagesPerConversation` and are unlimited. The wall is the upsell, so a
+plan you upgrade *to* must not have one, or upgrading doesn't resolve what
+drove the click. The UI enforces that shape: the wall only carries the
+Upgrade button for accounts that have somewhere to go, so a capped paid plan
+would strand a paying user at a dead end with nothing to click. Reusing the
+tiers' `maxContextMessages` values (20 and 50) for the quota would also put
+two different limits behind the same numbers in the same variation, which is
+precisely the confusion that prompted building this. If paid plans ever do
+need fair-use caps, pick numbers that are visibly quotas rather than borrowed
+context windows, and leave the top tier uncapped.
+
 **AI Config and chat-tier-config are two systems with two different jobs, not
 one duplicated.** `chat-tier-config` stays the access-control layer — which
 models and context length an account's *tier* is allowed, plus which
