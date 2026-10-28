@@ -32,7 +32,8 @@ services:
     # the Cloudflare Tunnel, same as every other service here.
     ports:
       - "127.0.0.1:3200:3000"
-    restart: unless-stopped
+    # Do not auto-start with the host. Start this after the model service is up.
+    restart: "no"
     networks:
       - openwebui
 

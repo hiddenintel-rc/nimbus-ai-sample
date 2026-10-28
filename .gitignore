@@ -38,6 +38,9 @@ yarn-error.log*
 .env*
 !.env.example
 
+# local security review notes (unresolved findings, real paths): keep off GitHub
+/docs/SECURITY_REVIEW*.md
+
 # vercel
 .vercel
 
