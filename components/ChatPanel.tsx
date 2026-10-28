@@ -143,6 +143,25 @@ function tokenMeter(message: Message): string | null {
   return `${message.completionTokens.toLocaleString('en-US')} / ${message.maxTokens.toLocaleString('en-US')}`;
 }
 
+/** Latest reply caption, shown beside the model and tool controls. */
+function replyStatus(messages: Message[]): string | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.role !== 'assistant') continue;
+    if (message.imageGeneration) return 'generated locally';
+    if (!message.servedBy) continue;
+    const parts = [
+      `served by ${message.servedBy.modelLabel || message.servedBy.model}`,
+      `${message.servedBy.label} config`,
+    ];
+    const meter = tokenMeter(message);
+    if (meter) parts.push(`${meter} tokens`);
+    if (message.webSearch) parts.push('searched the web');
+    return parts.join(' · ');
+  }
+  return null;
+}
+
 export default function ChatPanel({
   initialTierConfig,
   aiDefaultModel,
@@ -311,6 +330,8 @@ export default function ChatPanel({
     }
   }
 
+  const status = replyStatus(messages);
+
   return (
     <div className="flex flex-col gap-3">
       <div className="flex max-h-[32rem] flex-col gap-3 overflow-y-auto">
@@ -319,9 +340,7 @@ export default function ChatPanel({
             Ask the assistant something to try it out.
           </p>
         )}
-        {messages.map((message, index) => {
-          const meter = tokenMeter(message);
-          return (
+        {messages.map((message, index) => (
           <div
             key={index}
             className={message.role === 'user' ? 'self-end' : 'self-start'}
@@ -356,25 +375,8 @@ export default function ChatPanel({
                 message.content
               )}
             </div>
-            {(message.servedBy || message.imageGeneration) && (
-              <p className="mt-1 text-xs text-zinc-400 dark:text-zinc-600">
-                {message.imageGeneration ? (
-                  <>generated locally</>
-                ) : (
-                  message.servedBy && (
-                    <>
-                      served by {message.servedBy.modelLabel ?? message.servedBy.model} &middot;{' '}
-                      {message.servedBy.label} config
-                      {meter && <> &middot; {meter} tokens</>}
-                      {message.webSearch && <> &middot; searched the web</>}
-                    </>
-                  )
-                )}
-              </p>
-            )}
           </div>
-          );
-        })}
+        ))}
         {isLoading && !receiving && (
           <div className="self-start rounded-xl bg-zinc-100 px-3 py-2 text-sm text-zinc-500 dark:bg-zinc-900 dark:text-zinc-500">
             {generatingImage
@@ -406,7 +408,10 @@ export default function ChatPanel({
         </button>
       </form>
 
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap items-center gap-2">
+        {status && (
+          <p className="basis-full text-xs font-medium text-zinc-950 dark:text-white">{status}</p>
+        )}
         {/* Locked models are listed but disabled, so each plan can see what
             the next one adds. The server rejects them regardless. */}
         <select
@@ -415,7 +420,7 @@ export default function ChatPanel({
           onChange={(event) => setModelChoice(event.target.value)}
           disabled={imageRequested}
           title={imageRequested ? 'Image generation does not use the chat model' : undefined}
-          className="self-start rounded-full border border-black/[.1] bg-white px-3 py-1 text-xs font-medium text-zinc-600 hover:border-black/[.3] disabled:opacity-50 dark:border-white/[.145] dark:bg-zinc-950 dark:text-zinc-400"
+          className="self-center rounded-full border border-black/[.1] bg-white px-3 py-1 text-xs font-medium text-zinc-950 hover:border-black/[.3] disabled:opacity-50 dark:border-white/[.145] dark:bg-zinc-950 dark:text-white"
         >
           {tierConfig.models.map((model) => (
             <option key={model.id} value={model.id}>
@@ -436,8 +441,8 @@ export default function ChatPanel({
             onClick={() => setImageGeneration((on) => !on)}
             className={
               imageGeneration
-                ? 'self-start rounded-full border border-blue-600 bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700 dark:border-blue-500 dark:bg-blue-950 dark:text-blue-300'
-                : 'self-start rounded-full border border-black/[.1] px-3 py-1 text-xs font-medium text-zinc-600 hover:border-black/[.3] dark:border-white/[.145] dark:text-zinc-400'
+                ? 'self-center rounded-full border border-blue-600 bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700 dark:border-blue-500 dark:bg-blue-950 dark:text-blue-300'
+                : 'self-center rounded-full border border-black/[.1] px-3 py-1 text-xs font-medium text-zinc-950 hover:border-black/[.3] dark:border-white/[.145] dark:text-white'
             }
           >
             Generate an image: {imageGeneration ? 'On' : 'Off'}
@@ -450,8 +455,8 @@ export default function ChatPanel({
             onClick={() => setWebSearch((on) => !on)}
             className={
               webSearch
-                ? 'self-start rounded-full border border-blue-600 bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700 dark:border-blue-500 dark:bg-blue-950 dark:text-blue-300'
-                : 'self-start rounded-full border border-black/[.1] px-3 py-1 text-xs font-medium text-zinc-600 hover:border-black/[.3] dark:border-white/[.145] dark:text-zinc-400'
+                ? 'self-center rounded-full border border-blue-600 bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700 dark:border-blue-500 dark:bg-blue-950 dark:text-blue-300'
+                : 'self-center rounded-full border border-black/[.1] px-3 py-1 text-xs font-medium text-zinc-950 hover:border-black/[.3] dark:border-white/[.145] dark:text-white'
             }
           >
             Search the web: {webSearch ? 'On' : 'Off'}
