@@ -412,8 +412,8 @@ Flip the flag **Off** and the toggle disappears without a reload.
 #### `chat-tier-config` — JSON
 
 Controls which models each account's tier can pick from the chat's model
-menu, which ones it sees greyed out as an upsell, and how much conversation
-history it gets.
+menu, which ones it sees greyed out as an upsell, how much conversation
+history it gets, and how many messages it may send in one conversation.
 
 1. **Create flag** → Name: `Chat Tier Config`, Key: `chat-tier-config`,
    Type: **JSON**. Turn on **"Available on client-side SDKs"** — the model
@@ -431,6 +431,7 @@ history it gets.
    {
      "label": "Free",
      "maxContextMessages": 4,
+     "maxMessagesPerConversation": 4,
      "defaultModel": "Qwen3.5-4B",
      "models": [{ "id": "Qwen3.5-4B", "label": "Qwen 4B" }],
      "lockedModels": [
@@ -490,10 +491,30 @@ part of the demo. The precedence is better shown live — add the target in
 front of an audience and the open tab's model menu collapses with no reload,
 then delete it again.
 
-`maxContextMessages` only takes effect when `enable-conversation-memory` is
-on for that account. Free is excluded from memory above, so the free tier is
-stateless and its `4` is never reached — it is kept as the value that applies
-if memory is ever extended to free.
+**Two different limits, often confused.** `maxContextMessages` is a sliding
+window over what gets replayed to the model, and it only takes effect when
+`enable-conversation-memory` is on for the account — it never refuses a
+message, it just forgets older ones. Free is excluded from memory above, so
+the free tier is stateless and its `4` is never reached; it is kept as the
+value that would apply if memory ever reached free.
+
+`maxMessagesPerConversation` is the hard stop. Omit it and the plan is
+unlimited, which is what Pro and Enterprise do. Set it, and `/api/chat`
+refuses with **403** once the conversation has used its allowance, and the
+browser replaces the composer with the plan's wall and the upgrade button
+before that happens. It does not depend on memory. Two things follow from
+the app having no database:
+
+- **It is per conversation, not per account.** The count comes from the
+  history the browser submits, so reloading starts a fresh allowance. That is
+  a real product shape ("4 messages per conversation on the free plan"), not
+  an account quota — a per-account limit needs storage this project
+  deliberately doesn't have.
+- **It fails open.** `DEFAULT_TIER_CONFIG` sets no limit, so if LaunchDarkly
+  is unreachable nobody is turned away because a flag couldn't be read.
+
+The app ships inert until a variation carries the field: no
+`maxMessagesPerConversation` anywhere means no behavior change at all.
 
 If you change these variations on a deployment that's still running an
 older build of this app, keep a `"model"` field in each one (the tier's

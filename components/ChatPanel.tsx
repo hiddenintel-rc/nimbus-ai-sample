@@ -3,7 +3,14 @@
 import { useMemo, useState, type FormEvent } from 'react';
 import { useFlags } from 'launchdarkly-react-client-sdk';
 import MessageContent, { type Citation } from '@/components/MessageContent';
-import { normalizeTierConfig, resolveModel, type TierConfig } from '@/lib/tier-config';
+import UpgradeCta from '@/components/UpgradeCta';
+import {
+  countUserMessages,
+  normalizeTierConfig,
+  overMessageLimit,
+  resolveModel,
+  type TierConfig,
+} from '@/lib/tier-config';
 
 type ServedBy = { model: string; modelLabel: string; label: string };
 type GeneratedImage = { src: string; alt: string };
@@ -165,9 +172,12 @@ function replyStatus(messages: Message[]): string | null {
 export default function ChatPanel({
   initialTierConfig,
   aiDefaultModel,
+  canUpgrade = false,
 }: {
   initialTierConfig: TierConfig;
   aiDefaultModel?: string;
+  /** Free accounts get the upsell; paid ones have nothing to upgrade to here. */
+  canUpgrade?: boolean;
 }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [modelChoice, setModelChoice] = useState<string | null>(null);
@@ -181,6 +191,8 @@ export default function ChatPanel({
   const [searching, setSearching] = useState(false);
   const [generatingImage, setGeneratingImage] = useState(false);
   const [receiving, setReceiving] = useState(false);
+  /** Set when the server refuses on quota, in case this page's flag value lags. */
+  const [serverLimit, setServerLimit] = useState<number | null>(null);
 
   // These flags only decide whether a toggle is offered (and hide it live
   // when the flag goes off). The server re-checks each flag on every request.
@@ -197,6 +209,15 @@ export default function ChatPanel({
     () => (liveTierConfig === undefined ? initialTierConfig : normalizeTierConfig(liveTierConfig)),
     [liveTierConfig, initialTierConfig],
   );
+  // The plan's message allowance. The server decides; this only stops the
+  // composer so the user isn't typing into a request that will be refused.
+  // `sent + 1` is the message they are about to write, not the one they sent.
+  const sent = countUserMessages(messages);
+  const messageLimit = serverLimit ?? tierConfig.maxMessagesPerConversation;
+  const limitReached =
+    serverLimit !== null || overMessageLimit(tierConfig, sent + 1);
+  const remaining = messageLimit !== undefined ? Math.max(messageLimit - sent, 0) : undefined;
+
   // A pick the tier no longer allows (flag edit, plan change) is dropped, so
   // the menu falls back to the default instead of showing a locked model.
   const allowedChoice =
@@ -239,6 +260,14 @@ export default function ChatPanel({
       const contentType = response.headers.get('content-type') ?? '';
       if (contentType.includes('application/json')) {
         const data = await response.json();
+        if (response.status === 403 && data?.limitReached) {
+          // Nothing was sent, so take the message back out of the thread and
+          // hand the text back rather than leaving it sitting there unanswered.
+          setMessages(messages);
+          setInput(trimmed);
+          setServerLimit(typeof data.limit === 'number' ? data.limit : 0);
+          return;
+        }
         if (!response.ok) {
           throw new Error(data.error ?? 'Something went wrong.');
         }
@@ -392,25 +421,43 @@ export default function ChatPanel({
 
       {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
 
-      <form onSubmit={handleSubmit} className="flex gap-2">
-        <input
-          value={input}
-          onChange={(event) => setInput(event.target.value)}
-          placeholder={imageRequested ? 'Describe an image…' : 'Ask something…'}
-          className="flex-1 rounded-lg border border-black/[.1] bg-white px-3 py-2 text-sm text-black outline-none focus:border-black/[.3] dark:border-white/[.145] dark:bg-zinc-950 dark:text-zinc-50"
-        />
-        <button
-          type="submit"
-          disabled={isLoading}
-          className="rounded-lg bg-black px-4 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-zinc-50 dark:text-black"
-        >
-          Send
-        </button>
-      </form>
+      {limitReached ? (
+        <div className="flex flex-col items-start gap-2 rounded-xl border border-black/[.1] bg-zinc-50 px-4 py-3 dark:border-white/[.145] dark:bg-zinc-900">
+          <p className="text-sm font-medium text-black dark:text-zinc-50">
+            That&apos;s all {messageLimit} messages on the {tierConfig.label} plan.
+          </p>
+          <p className="text-xs text-zinc-600 dark:text-zinc-400">
+            The limit is per conversation &mdash; reload the page to start a new
+            one{canUpgrade ? ', or move up a plan for longer conversations.' : '.'}
+          </p>
+          {canUpgrade && <UpgradeCta />}
+        </div>
+      ) : (
+        <form onSubmit={handleSubmit} className="flex gap-2">
+          <input
+            value={input}
+            onChange={(event) => setInput(event.target.value)}
+            placeholder={imageRequested ? 'Describe an image…' : 'Ask something…'}
+            className="flex-1 rounded-lg border border-black/[.1] bg-white px-3 py-2 text-sm text-black outline-none focus:border-black/[.3] dark:border-white/[.145] dark:bg-zinc-950 dark:text-zinc-50"
+          />
+          <button
+            type="submit"
+            disabled={isLoading}
+            className="rounded-lg bg-black px-4 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-zinc-50 dark:text-black"
+          >
+            Send
+          </button>
+        </form>
+      )}
 
       <div className="flex flex-wrap items-center gap-2">
         {status && (
           <p className="basis-full text-xs font-medium text-zinc-950 dark:text-white">{status}</p>
+        )}
+        {remaining !== undefined && !limitReached && (
+          <span className="self-center rounded-full bg-zinc-100 px-2.5 py-1 text-xs font-medium text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400">
+            {remaining} of {messageLimit} messages left
+          </span>
         )}
         {/* Locked models are listed but disabled, so each plan can see what
             the next one adds. The server rejects them regardless. */}
@@ -463,6 +510,11 @@ export default function ChatPanel({
           </button>
         )}
       </div>
+
+      {/* One upsell, not two: while there is room left it sits quietly under
+          the controls, and once the wall is up it moves into the wall, where
+          the user has an actual reason to press it. */}
+      {canUpgrade && !limitReached && <UpgradeCta />}
     </div>
   );
 }

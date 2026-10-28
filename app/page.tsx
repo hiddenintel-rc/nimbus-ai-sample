@@ -3,7 +3,6 @@ import BrandLogo from "@/components/BrandLogo";
 import ChatPanel from "@/components/ChatPanel";
 import LDUserSync from "@/components/LDUserSync";
 import MemoryStatusBadge from "@/components/MemoryStatusBadge";
-import UpgradeCta from "@/components/UpgradeCta";
 import { auth } from "@/lib/auth";
 import { logoutAction } from "@/lib/auth-actions";
 import { AI_CONFIG_KEY, DEFAULT_AI_CONFIG } from "@/lib/ai-config";
@@ -113,8 +112,8 @@ export default async function Home() {
               <ChatPanel
                 initialTierConfig={chatSettings?.tierConfig ?? DEFAULT_TIER_CONFIG}
                 aiDefaultModel={chatSettings?.aiDefaultModel}
+                canUpgrade={session.user.tier === "free"}
               />
-              {session.user.tier === "free" && <UpgradeCta />}
             </>
           ) : (
             <div className="flex flex-col items-start gap-3 py-4">

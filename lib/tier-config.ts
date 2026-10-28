@@ -19,7 +19,19 @@ export type TierConfig = {
   /** Shown greyed out in the picker as an upsell. Never accepted by the server. */
   lockedModels: LockedModel[];
   defaultModel: string;
+  /**
+   * How much of the conversation is replayed to the model, when
+   * `enable-conversation-memory` is on for the account. A tier without memory
+   * never reaches this.
+   */
   maxContextMessages: number;
+  /**
+   * How many messages this plan may send in one conversation. Undefined means
+   * unlimited, which is what the paid tiers serve. Unlike `maxContextMessages`
+   * this is a hard stop, enforced server-side on every request, and it does
+   * not depend on memory being on.
+   */
+  maxMessagesPerConversation?: number;
   label: string;
 };
 
@@ -36,6 +48,10 @@ export const DEFAULT_TIER_CONFIG: TierConfig = {
   ],
   defaultModel: 'Qwen3.5-4B',
   maxContextMessages: 4,
+  // Deliberately no `maxMessagesPerConversation`. This value is what the app
+  // falls back to when LaunchDarkly is unreachable, and refusing to answer
+  // someone because a flag could not be read is worse than letting a few extra
+  // messages through: the quota fails open.
   label: 'Free',
 };
 
@@ -45,6 +61,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function nonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
+}
+
+function positiveInteger(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : undefined;
 }
 
 /**
@@ -94,20 +114,44 @@ export function normalizeTierConfig(raw: unknown): TierConfig {
       ? raw.defaultModel
       : models[0].id;
 
-  const maxContextMessages =
-    typeof raw.maxContextMessages === 'number' &&
-    Number.isInteger(raw.maxContextMessages) &&
-    raw.maxContextMessages > 0
-      ? raw.maxContextMessages
-      : DEFAULT_TIER_CONFIG.maxContextMessages;
+  const maxContextMessages = positiveInteger(raw.maxContextMessages) ?? DEFAULT_TIER_CONFIG.maxContextMessages;
+
+  // Absent, zero or malformed all mean "no limit" — a tier only gets a quota
+  // when its variation says so, so adding the field to one variation cannot
+  // accidentally cap the others.
+  const maxMessagesPerConversation = positiveInteger(raw.maxMessagesPerConversation);
 
   return {
     models,
     lockedModels,
     defaultModel,
     maxContextMessages,
+    ...(maxMessagesPerConversation !== undefined ? { maxMessagesPerConversation } : {}),
     label: nonEmptyString(raw.label) ? raw.label : DEFAULT_TIER_CONFIG.label,
   };
+}
+
+/** Counts what the user has sent; assistant replies don't consume quota. */
+export function countUserMessages(messages: readonly { role: string }[]): number {
+  return messages.reduce((total, message) => (message.role === 'user' ? total + 1 : total), 0);
+}
+
+/**
+ * Whether `userMessageCount` messages is more than this plan allows.
+ *
+ * Takes a count rather than the message list because the two callers are
+ * asking different questions at different moments. The route counts the
+ * history it was handed, which already includes the message being sent, so
+ * the 4th message of a 4-message plan is `4 > 4` — allowed. The browser is
+ * asking whether to let the user start another one, so it passes
+ * `sent + 1`. Keeping the comparison in one place means the wall can't end
+ * up one message apart on the two sides.
+ */
+export function overMessageLimit(tier: TierConfig, userMessageCount: number): boolean {
+  return (
+    tier.maxMessagesPerConversation !== undefined &&
+    userMessageCount > tier.maxMessagesPerConversation
+  );
 }
 
 /**

@@ -9,7 +9,13 @@ import {
 } from '@/lib/inference';
 import { getLDClient, getAiClient, buildUserContext } from '@/lib/ld-server';
 import { auth } from '@/lib/auth';
-import { DEFAULT_TIER_CONFIG, normalizeTierConfig, resolveModel } from '@/lib/tier-config';
+import {
+  countUserMessages,
+  DEFAULT_TIER_CONFIG,
+  normalizeTierConfig,
+  overMessageLimit,
+  resolveModel,
+} from '@/lib/tier-config';
 import { AI_CONFIG_KEY, DEFAULT_AI_CONFIG } from '@/lib/ai-config';
 import { modelContextTokens } from '@/lib/model-context';
 import type { LDAIConfigTracker } from '@launchdarkly/server-sdk-ai';
@@ -134,6 +140,21 @@ export async function POST(request: Request) {
   const tierConfig = normalizeTierConfig(
     await client.variation('chat-tier-config', context, DEFAULT_TIER_CONFIG),
   );
+  // The plan's message allowance, enforced before anything is spent on the
+  // request. `history` already includes the message being sent, so this is
+  // the decision for *this* message, not the next one. A browser that ignores
+  // its own disabled composer still lands here.
+  if (overMessageLimit(tierConfig, countUserMessages(history))) {
+    return NextResponse.json(
+      {
+        error: `The ${tierConfig.label} plan includes ${tierConfig.maxMessagesPerConversation} messages per conversation.`,
+        limitReached: true,
+        limit: tierConfig.maxMessagesPerConversation,
+      },
+      { status: 403 },
+    );
+  }
+
   const webSearchEnabled = await client.variation('enable-web-search', context, false);
   const imageGenerationEnabled = await client.variation('enable-image-generation', context, false);
 

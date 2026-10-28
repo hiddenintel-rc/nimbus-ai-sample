@@ -229,12 +229,22 @@ which is why the free tier is the only one an experiment on this flag can
 reach — `demo-pro` and `demo-enterprise` match a rule first and never enter
 one.
 
-**`maxContextMessages` is conditional on memory.** `/api/chat` only applies
-the cap when `enable-conversation-memory` is on for that context; with memory
-off it sends the latest message alone. Free is excluded from memory, so the
-free tier is stateless and its `4` is never exercised. A free account can
-therefore send any number of messages without hitting a cap — there is no
-accumulating history for the cap to trim.
+**Two limits that are easy to confuse.** `maxContextMessages` is a sliding
+window: `/api/chat` only applies it when `enable-conversation-memory` is on
+for that context, and it never refuses anything — it just stops replaying
+older turns. Free is excluded from memory, so the free tier is stateless and
+its `4` is never exercised.
+
+`maxMessagesPerConversation` is the hard stop, added on 2026-10-28 because
+the window was being read as a quota it never was. It is unconditional, it is
+checked before any work is done on the request, and the browser blocks the
+composer at the same boundary so the user isn't typing into a request that
+will be refused. The comparison lives in one shared helper
+(`overMessageLimit` in `lib/tier-config.ts`) because the two sides ask
+subtly different questions: the route counts a history that already contains
+the pending message, while the browser asks about the message not yet
+written, and splitting that logic is how the wall ends up a message apart on
+the two sides.
 
 ### 4. Live changes without a redeploy — release and remediate
 
@@ -449,6 +459,26 @@ now demonstrated live instead — adding the target in front of an audience
 collapses the open tab's model menu with no reload, which shows both
 individual-target precedence and streaming updates in one move.
 
+**The message allowance is per conversation, because there is no database.**
+A free plan that stops at N messages is the limit that makes the Upgrade
+button mean something — it fires at the moment someone hits a wall, instead
+of being a button with no occasion to press it. But a real per-account quota
+needs somewhere to keep the count, and this project deliberately has no
+persistence (see "Known gaps"). The count is therefore taken from the history
+the browser submits on each request, which makes it a per-conversation limit:
+reloading starts a fresh allowance. That is an honest product shape rather
+than a workaround — "4 messages per conversation on the free plan" is
+something a real SaaS sells — but it is not an account quota and the docs say
+so rather than implying otherwise. The enforcement itself is real: the route
+refuses with 403 regardless of what the browser does, so the wall cannot be
+clicked past.
+
+It also fails open. `DEFAULT_TIER_CONFIG` carries no limit, so an unreachable
+LaunchDarkly gives people a few extra messages rather than turning them away
+on a value that could not be read — the opposite choice from `memoryEnabled`,
+which defaults to `false`, because withholding a feature is a smaller harm
+than refusing to answer at all.
+
 **AI Config and chat-tier-config are two systems with two different jobs, not
 one duplicated.** `chat-tier-config` stays the access-control layer — which
 models and context length an account's *tier* is allowed, plus which
@@ -495,7 +525,7 @@ the backend credentials are never published.
 | `new-logo` | boolean | yes (needs the live swap) | **Currently toggled Off**, so every account is served `false` and the header shows the plain text wordmark. Gates the redesigned cloud + wordmark logo (`components/Logo.tsx`) vs. the original plain text wordmark, via `components/BrandLogo.tsx`. A second, independent example of the release/remediate pattern — applied to a brand/visual rollout instead of a product feature, which is a genuinely common real-world use of flags. Defaults to the new logo if the flag is missing. |
 | `enable-web-search` | boolean | yes (shows/hides the toggle live) | Pure kill switch — no rules, no targets, so Off removes it for every account at once. `/api/chat` only adds Open WebUI's `features.web_search` when this flag is on for the context, the user's toggle asked for it, and the provider is local — the browser can request search but never force it. Serves `true` to all three accounts (verified); a `tier` rule would make it an entitlement in a live product, but it is deliberately not one here. |
 | `enable-image-generation` | boolean | yes (shows/hides the toggle live) | Kill switch for image generation, and a paid-plan entitlement. When the flag is on, the user's toggle is on, and the provider is local, `/api/chat` sends that turn's prompt to Open WebUI `POST /api/v1/images/generations` instead of the chat model. The returned file is fetched server-side and shown in the thread. Serves `true` by default, with an individual target on the `demo-free` key serving `false`. That is deliberately per-account rather than a `tier` rule: image generation is the most expensive thing the single GPU can be asked to do, and `demo-free` is the login that gets shared most widely. Editing a previous image is not wired yet. |
-| `chat-tier-config` | JSON (4 variations; three in use: `free` / `pro` / `enterprise`) | yes (the model menu updates live; the server re-checks every request) | Targeting demo. Each variation is `{ label, maxContextMessages, defaultModel, models, lockedModels }`: Free selects the 4B; Pro the 4B and the 4B long-context; Enterprise those plus Coder-30B and Qwen 3.8-27B. `lockedModels` are shown disabled with the plan that unlocks them and are never accepted by `/api/chat`. Malformed or older single-model values fall back safely (`normalizeTierConfig`). Rule-based on the context's `tier` attribute, with no individual targets as of 2026-10-27; the Default rule serves Free Tier and is the slot an experiment attaches to. A fourth variation, `Enterprise Tier - No 27B`, exists in the environment but is served by nothing. |
+| `chat-tier-config` | JSON (4 variations; three in use: `free` / `pro` / `enterprise`) | yes (the model menu and the message allowance update live; the server re-checks every request) | Targeting demo, and the carrier for every per-plan limit. Each variation is `{ label, maxContextMessages, maxMessagesPerConversation?, defaultModel, models, lockedModels }`: Free selects the 4B; Pro the 4B and the 4B long-context; Enterprise those plus Coder-30B and Qwen 3.8-27B. `lockedModels` are shown disabled with the plan that unlocks them and are never accepted by `/api/chat`. Malformed or older single-model values fall back safely (`normalizeTierConfig`). Optional `maxMessagesPerConversation` is the plan's hard message allowance (see "Two limits that are easy to confuse"); omitting it means unlimited, which is what Pro and Enterprise do. Rule-based on the context's `tier` attribute, with no individual targets as of 2026-10-27; the Default rule serves Free Tier and is the slot an experiment attaches to. A fourth variation, `Enterprise Tier - No 27B`, exists in the environment but is served by nothing. |
 
 Context sent to LaunchDarkly: `{ kind: "user", key: <demo account id>, email,
 tier, accountAgeDays }`, built in `lib/ld-server.ts#buildUserContext` from the
@@ -579,6 +609,10 @@ first token on `aiConfig.createTracker()` when the reply stream ends.
 
 ## Known gaps (intentional, not forgotten)
 
+- **The message allowance resets on reload.** It is counted from the
+  submitted conversation, so it is per conversation and not per account; a
+  new tab gets a fresh allowance. Making it an account quota means adding
+  storage, which is the same gap as conversation persistence below.
 - **Chat can't work on the Vercel deployment** — the cause is external and
   documented under "Deployments" above. Not fixable in this repo.
 - **Citations depend on undocumented Open WebUI behavior.** Searched replies
