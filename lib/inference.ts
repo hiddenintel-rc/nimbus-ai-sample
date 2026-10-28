@@ -1,5 +1,5 @@
 import OpenAI from 'openai';
-import type { ChatCompletionCreateParamsNonStreaming } from 'openai/resources/chat/completions';
+import type { ChatCompletionCreateParamsStreaming } from 'openai/resources/chat/completions';
 
 export type ChatMessage = {
   role: 'system' | 'user' | 'assistant';
@@ -79,6 +79,13 @@ export type ChatCompletionResult = {
   citations?: Citation[];
 };
 
+/** One streamed piece of a reply. `completionTokens` counts generated tokens so far, including reasoning that is not shown. */
+export type ChatDelta = {
+  text: string;
+  completionTokens: number;
+  promptTokens?: number;
+};
+
 type OpenWebUISource = {
   source?: { id?: string };
   document?: unknown[];
@@ -108,41 +115,92 @@ export function extractCitations(raw: unknown): Citation[] {
   return [...byKey.values()].filter((citation) => citation.url);
 }
 
+/** A chat turn gives up after 7 minutes so a stuck model cannot run longer. */
+const CHAT_TIMEOUT_MS = 7 * 60 * 1000;
+
 /** Open WebUI's own extension to the OpenAI request body. */
-type OpenWebUIParams = ChatCompletionCreateParamsNonStreaming & {
+type OpenWebUIParams = ChatCompletionCreateParamsStreaming & {
   features?: { web_search?: boolean };
 };
 
-export async function chatCompletion(
+/**
+ * Streams the assistant's reply. Each yield is one generated token: visible
+ * text, or a reasoning token that only advances the count. The return value
+ * carries the full reply, token usage, and any web-search citations.
+ * Pass `signal` to stop early when the browser disconnects; the call also
+ * stops on its own after {@link CHAT_TIMEOUT_MS}.
+ */
+export async function* chatCompletion(
   model: string,
   messages: ChatMessage[],
-  options?: { temperature?: number; webSearch?: boolean },
-): Promise<ChatCompletionResult> {
+  options?: { temperature?: number; webSearch?: boolean; signal?: AbortSignal },
+): AsyncGenerator<ChatDelta, ChatCompletionResult> {
   const client = getProvider() === 'groq' ? getGroqClient() : getLocalClient();
+  const signal = AbortSignal.any([
+    AbortSignal.timeout(CHAT_TIMEOUT_MS),
+    ...(options?.signal ? [options.signal] : []),
+  ]);
   const params: OpenWebUIParams = {
     model,
     messages,
+    stream: true,
+    stream_options: { include_usage: true },
     ...(options?.temperature !== undefined ? { temperature: options.temperature } : {}),
     // Open WebUI runs the search and adds the results to the model's context.
     ...(options?.webSearch && supportsWebSearch() ? { features: { web_search: true } } : {}),
   };
-  const completion = await client.chat.completions.create(params);
-  const reply = completion.choices[0]?.message?.content;
+  const stream = await client.chat.completions.create(params, { signal });
+
+  let reply = '';
+  let completionTokens = 0;
+  let promptTokens: number | undefined;
+  let usage: ChatCompletionResult['usage'];
+  const rawSources: unknown[] = [];
+
+  for await (const chunk of stream) {
+    const delta = chunk.choices[0]?.delta as
+      | { content?: string | null; reasoning_content?: string | null; reasoning?: string | null }
+      | undefined;
+    const text = typeof delta?.content === 'string' ? delta.content : '';
+    // Qwen 3.8 spends tokens on reasoning before the visible answer. Those
+    // still occupy the context window, so the counter has to move for them.
+    const reasoningText =
+      typeof delta?.reasoning_content === 'string'
+        ? delta.reasoning_content
+        : typeof delta?.reasoning === 'string'
+          ? delta.reasoning
+          : '';
+    if (text.length > 0 || reasoningText.length > 0) completionTokens += 1;
+    if (chunk.usage) {
+      promptTokens = chunk.usage.prompt_tokens;
+      usage = {
+        promptTokens: chunk.usage.prompt_tokens,
+        completionTokens: chunk.usage.completion_tokens,
+        totalTokens: chunk.usage.total_tokens,
+      };
+      if (typeof chunk.usage.completion_tokens === 'number') {
+        completionTokens = Math.max(completionTokens, chunk.usage.completion_tokens);
+      }
+    }
+    if (text.length > 0) reply += text;
+    if (text.length > 0 || reasoningText.length > 0) {
+      yield {
+        text,
+        completionTokens,
+        ...(promptTokens !== undefined ? { promptTokens } : {}),
+      };
+    }
+    // `sources` is Open WebUI's addition. It is not on the OpenAI chunk type,
+    // and a streamed search can attach it to whichever event carries it.
+    const sources = (chunk as { sources?: unknown }).sources;
+    if (Array.isArray(sources)) rawSources.push(...sources);
+  }
 
   if (!reply) {
     throw new Error('Inference provider returned an empty response.');
   }
 
-  const usage = completion.usage
-    ? {
-        promptTokens: completion.usage.prompt_tokens,
-        completionTokens: completion.usage.completion_tokens,
-        totalTokens: completion.usage.total_tokens,
-      }
-    : undefined;
-
-  const citations = params.features?.web_search ? extractCitations(completion) : [];
-
+  const citations = params.features?.web_search ? extractCitations({ sources: rawSources }) : [];
   return { reply, usage, ...(citations.length ? { citations } : {}) };
 }
 

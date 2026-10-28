@@ -122,7 +122,7 @@ default, Groq only when `INFERENCE_PROVIDER=groq` is set explicitly.
 ```mermaid
 sequenceDiagram
     accTitle: Chat request flow
-    accDescr: The browser posts the conversation to /api/chat. The route checks the session, builds a LaunchDarkly context from it, evaluates the memory flag, the tier flag, the AI Config and the web search flag locally, trims the history, calls the model backend (which runs a web search only when the flag is on and the user's toggle asked for it), reports AI metrics to LaunchDarkly in the background, and returns the reply with a served-by caption.
+    accDescr: The browser posts the conversation to /api/chat. The route checks the session, builds a LaunchDarkly context from it, evaluates the memory flag, the tier flag, the AI Config and the web search flag locally, trims the history, and opens a server-sent event stream. It sends the served-by caption before the model answers, then forwards each token. When the stream ends it records AI metrics and sends citations.
     autonumber
 
     participant B as Browser<br/>(ChatPanel)
@@ -146,14 +146,31 @@ sequenceDiagram
     R->>SDK: enable-web-search?
     SDK-->>R: on / off
     R->>R: Trim history<br/>memory off → last message only<br/>memory on → last N for this tier
-    R->>M: Chat completion<br/>(picked model, AI Config prompt)
+    R-->>B: SSE meta<br/>served-by model and tier, before the model replies
+    R->>M: Streaming chat completion<br/>(picked model, AI Config prompt)
     opt Search flag on and the user's toggle on
         M->>M: Tavily search,<br/>results added to the context
     end
-    M-->>R: Reply + token usage
-    R--)SDK: Token, latency, success metrics<br/>(flushed to LaunchDarkly in the background)
-    R-->>B: Reply + "served by" model and tier<br/>(+ "searched the web")
+    loop Each content token
+        M-->>R: Content delta
+        R-->>B: SSE delta
+    end
+    M-->>R: Token usage and sources
+    R--)SDK: Tokens, duration, time to first token, success<br/>(recorded when the stream ends)
+    R-->>B: SSE done<br/>citations
 ```
+
+A chat reply is a server-sent event stream. The route writes `meta` (the
+served-by model, and whether this turn searched) before the model produces a
+token, then a `delta` for each token, then `done` with citations. That first
+event is what keeps a proxy from closing the request. Its read timeout is
+the gap since the last byte from the app, 125 seconds by default, and a long
+answer can take longer than that to finish. While the model is quiet, during
+a load or a reasoning stretch, the route writes an
+SSE comment at least every 20 seconds. The upstream call is aborted at 7
+minutes. Image generation, and any failure before the stream starts, still
+return one JSON body. Token usage, duration, time to first token, and
+success are recorded on the AI Config tracker when the stream ends.
 
 Every LaunchDarkly answer above comes from the SDK's in-memory copy of the
 rules, built from the session — never from anything the browser sends. The
@@ -436,10 +453,9 @@ auto-invoke a model from an AI Config, but it pins `openai@>=4 <7` while this
 app already runs `openai@7`. Downgrading a working dependency just to use an
 optional convenience wrapper wasn't worth it. Instead, `app/api/chat/route.ts`
 calls `aiClient.completionConfig()` for the prompt/parameters, keeps calling
-the existing `chatCompletion()` exactly as before, and wraps that call in the
-AI Config's own `tracker.trackMetricsOf()` to report real token/latency/
-success metrics back to LaunchDarkly — same outcome, zero new dependency
-conflicts.
+the existing `chatCompletion()` for the model request, and records token
+usage, duration, time to first token, and success on the AI Config tracker
+when that stream ends — same outcome, zero new dependency conflicts.
 
 **The live environment's credentials stay out of the repo.** The README has
 two paths: a short quick start for someone who already has a configured
@@ -511,8 +527,8 @@ are re-fetched from LaunchDarkly on every chat request; the prompt and
 temperature go straight into the inference call, and the model becomes the
 default pick for tiers that allow it — confirmed live by editing the prompt in the
 dashboard mid-session and watching the very next response change tone with
-no redeploy. Wrapped in `aiConfig.createTracker().trackMetricsOf()` so token
-usage, success, and duration report back to LaunchDarkly automatically.
+no redeploy. The route records token usage, success, duration, and time to
+first token on `aiConfig.createTracker()` when the reply stream ends.
 
 ## Known gaps (intentional, not forgotten)
 

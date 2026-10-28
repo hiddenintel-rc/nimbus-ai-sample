@@ -11,7 +11,8 @@ import { getLDClient, getAiClient, buildUserContext } from '@/lib/ld-server';
 import { auth } from '@/lib/auth';
 import { DEFAULT_TIER_CONFIG, normalizeTierConfig, resolveModel } from '@/lib/tier-config';
 import { AI_CONFIG_KEY, DEFAULT_AI_CONFIG } from '@/lib/ai-config';
-import type { LDAIMetrics } from '@launchdarkly/server-sdk-ai';
+import { modelContextTokens } from '@/lib/model-context';
+import type { LDAIConfigTracker } from '@launchdarkly/server-sdk-ai';
 
 // 60s is the max Vercel allows on the Hobby plan; image generation (~50s in
 // testing) fits under it but with little headroom. Raise this if the project
@@ -35,17 +36,43 @@ function isValidHistory(value: unknown): value is IncomingMessage[] {
   );
 }
 
-function toLDMetrics(result: ChatCompletionResult): LDAIMetrics {
-  return {
-    success: true,
-    tokens: result.usage
-      ? {
-          total: result.usage.totalTokens,
-          input: result.usage.promptTokens,
-          output: result.usage.completionTokens,
-        }
-      : undefined,
-  };
+type ServedBy = { model: string; modelLabel: string; label: string };
+
+const KEEPALIVE_MS = 20_000;
+const encoder = new TextEncoder();
+
+function sse(payload: unknown): Uint8Array {
+  return encoder.encode(`data: ${JSON.stringify(payload)}\n\n`);
+}
+
+/** An SSE comment. Browsers ignore it; Cloudflare counts it as a read. */
+function keepalive(): Uint8Array {
+  return encoder.encode(`: keepalive\n\n`);
+}
+
+function recordMetrics(
+  tracker: LDAIConfigTracker | null,
+  result: ChatCompletionResult | undefined,
+  startedAt: number,
+  firstTokenAt: number | undefined,
+  failed: boolean,
+) {
+  if (!tracker) return;
+  try {
+    if (failed) tracker.trackError();
+    else tracker.trackSuccess();
+    if (result?.usage) {
+      tracker.trackTokens({
+        total: result.usage.totalTokens,
+        input: result.usage.promptTokens,
+        output: result.usage.completionTokens,
+      });
+    }
+    if (firstTokenAt !== undefined) tracker.trackTimeToFirstToken(firstTokenAt - startedAt);
+    tracker.trackDuration(Date.now() - startedAt);
+  } catch (error) {
+    console.error('[api/chat] metrics', error);
+  }
 }
 
 export async function POST(request: Request) {
@@ -141,27 +168,110 @@ export async function POST(request: Request) {
 
   const messages: ChatMessage[] = [...systemMessages, ...relevantHistory];
   const temperature = aiConfig.model?.parameters?.temperature as number | undefined;
+  const servedBy: ServedBy = { model: model.id, modelLabel: model.label, label: tierConfig.label };
+  const tracker = aiConfig.enabled ? aiConfig.createTracker() : null;
+  const startedAt = Date.now();
+  // Cancelled when the browser disconnects or this response stream is cancelled.
+  const upstream = new AbortController();
+  const onClientAbort = () => upstream.abort();
+  request.signal.addEventListener('abort', onClientAbort, { once: true });
 
-  try {
-    const result = aiConfig.enabled
-      ? await aiConfig
-          .createTracker()
-          .trackMetricsOf(toLDMetrics, () =>
-            chatCompletion(model.id, messages, { temperature, webSearch }),
-          )
-      : await chatCompletion(model.id, messages, { temperature, webSearch });
+  const stream = new ReadableStream({
+    async start(controller) {
+      const beat = setInterval(() => {
+        try {
+          controller.enqueue(keepalive());
+        } catch {
+          clearInterval(beat);
+        }
+      }, KEEPALIVE_MS);
 
-    return NextResponse.json({
-      reply: result.reply,
-      servedBy: { model: model.id, modelLabel: model.label, label: tierConfig.label },
-      webSearch,
-      citations: result.citations ?? [],
-    });
-  } catch (error) {
-    console.error('[api/chat]', error);
-    return NextResponse.json(
-      { error: 'The chat backend is unreachable right now. Please try again shortly.' },
-      { status: 502 },
-    );
-  }
+      let firstTokenAt: number | undefined;
+      let result: ChatCompletionResult | undefined;
+      let failed = false;
+
+      try {
+        // Goes out before the model is loaded, so the edge sees bytes during a swap.
+        const maxTokens = modelContextTokens(model.id);
+        controller.enqueue(
+          sse({
+            type: 'meta',
+            servedBy,
+            webSearch,
+            ...(maxTokens !== undefined ? { maxTokens } : {}),
+          }),
+        );
+
+        const completion = chatCompletion(model.id, messages, {
+          temperature,
+          webSearch,
+          signal: upstream.signal,
+        });
+
+        while (true) {
+          const step = await completion.next();
+          if (step.done) {
+            result = step.value;
+            break;
+          }
+          if (firstTokenAt === undefined && step.value.text.length > 0) firstTokenAt = Date.now();
+          controller.enqueue(
+            sse({
+              type: 'delta',
+              text: step.value.text,
+              completionTokens: step.value.completionTokens,
+              ...(step.value.promptTokens !== undefined
+                ? { promptTokens: step.value.promptTokens }
+                : {}),
+            }),
+          );
+        }
+
+        controller.enqueue(
+          sse({
+            type: 'done',
+            citations: result.citations ?? [],
+            ...(result.usage ? { usage: result.usage } : {}),
+          }),
+        );
+      } catch (error) {
+        failed = true;
+        console.error('[api/chat]', error);
+        // The browser already left; writing an error event has nowhere to go.
+        if (!request.signal.aborted && !upstream.signal.aborted) {
+          try {
+            controller.enqueue(
+              sse({
+                type: 'error',
+                error: 'The chat backend is unreachable right now. Please try again shortly.',
+              }),
+            );
+          } catch {
+            // The stream closed between the failure and this write.
+          }
+        }
+      } finally {
+        clearInterval(beat);
+        request.signal.removeEventListener('abort', onClientAbort);
+        recordMetrics(tracker, result, startedAt, firstTokenAt, failed);
+        try {
+          controller.close();
+        } catch {
+          // Already closed by the client.
+        }
+      }
+    },
+    cancel() {
+      upstream.abort();
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      'X-Accel-Buffering': 'no',
+      'X-Content-Type-Options': 'nosniff',
+    },
+  });
 }
