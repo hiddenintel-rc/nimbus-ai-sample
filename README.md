@@ -40,12 +40,12 @@ committing it by accident.
 **What to try:**
 - Log in as each account, open the model menu next to the chat's toggles,
   and send a message. Each reply shows a "served by …" caption naming the
-  model and tier config used. `demo-enterprise` gets the Enterprise menu;
-  `demo-pro` intentionally gets **Free** (see "Individual targeting" in
-  `docs/ARCHITECTURE.md`); `demo-free` reaches the experiment, so it gets
-  Free or Pro depending on its assigned arm.
+  model and tier config used. Each account gets its own plan's menu: Free
+  the 4B alone, Pro that plus the long-context 4B, Enterprise all four.
 - With the "Memory" badge on, tell it "My name is Alex, remember that,"
-  then ask "what's my name?" — it should recall it across turns.
+  then ask "what's my name?" — it should recall it across turns. Memory is
+  a paid feature, so use `demo-pro` or `demo-enterprise`; free accounts
+  answer every message as if it were the first.
 - As a free-tier account, the "Upgrade to Pro" button fires the conversion
   metric behind the Experimentation setup — no real checkout happens.
 - The assistant's tone/personality and temperature come from a LaunchDarkly
@@ -64,10 +64,11 @@ didn't set it up yourself.
 
 - A feature flag that can be released, toggled live with no page reload,
   and rolled back via a remote trigger
-- Rule-based and individual targeting on a real context (tier +
-  account age) driving which models and history window an account gets
-- An experiment on that same flag, with a conversion metric and a traffic
-  simulator for generating sample data
+- Rule-based targeting on a real, server-built context driving which models,
+  history window and paid features an account gets
+- An experiment harness on that same flag — a conversion metric and a
+  traffic simulator for generating sample data. No experiment is running
+  today; see "Experiment + metric" for why the last one was stopped
 - Login gating, with the actual enforcement server-side, not just a hidden
   UI element
 - A model menu per tier: Free gets the 4B, Pro adds the long-context 4B,
@@ -302,22 +303,31 @@ to confirm your SDK key/client ID work before moving on.
 #### `enable-conversation-memory` — boolean
 
 Controls whether the chat remembers earlier turns in the same conversation,
-or treats every message as a fresh start.
+or treats every message as a fresh start. It is also plan-gated: memory is
+a paid feature, so free accounts are served `false`.
 
 1. **Create flag** → Name: `Conversation Memory`, Key: `enable-conversation-memory`
    (the key must match exactly), Type: **Boolean**.
 2. Make sure **"Available on client-side SDKs"** is turned on — the landing
    page's live status badge needs it.
 3. Set the default rule to serve `true`, and toggle the flag **On**.
-4. **Add a remediation trigger:** open the flag, click the environment
+4. **Exclude the free plan:** add a custom rule — if `tier` is one of
+   `free` → serve `false`. Memory is what `chat-tier-config`'s
+   `maxContextMessages` caps, so a tier without memory is stateless and that
+   cap never applies to it (see the note under `chat-tier-config`). This
+   project's own environment currently does it with an individual target on
+   `demo-free` rather than a rule; a rule is what makes it a plan boundary
+   rather than one account's setting.
+5. **Add a remediation trigger:** open the flag, click the environment
    pill (e.g. "Test") near the top of the Targeting tab, choose
    **Flag actions → Configuration in environment**, find **Triggers**, and
    create one: Trigger type **Generic trigger**, action **turn the flag
    off**. Save the generated URL somewhere private — LaunchDarkly only shows
    it once.
 
-**Try it:** with the flag on, tell the chat "My name is Alex, remember
-that," then ask "what's my name?" — it should recall it. `curl -X POST
+**Try it:** log in as `demo-pro` or `demo-enterprise` (free has no memory by
+design, so it can't show this). With the flag on, tell the chat "My name is
+Alex, remember that," then ask "what's my name?" — it should recall it. `curl -X POST
 <your trigger URL>` and ask again in the same browser tab (no reload) — the
 "Memory" badge flips to Off live, and the assistant immediately forgets.
 
@@ -340,9 +350,14 @@ reload) — it reverts instantly to the plain text wordmark.
 
 Offers a "Search the web" toggle in the chat. When it's on and the user
 turns the toggle on, the request asks Open WebUI to run a web search (its
-Tavily integration) and add the results to the model's context. Enabled for
-every tier in this demo; in a live product you'd restrict it with a rule on
-`tier`.
+Tavily integration) and add the results to the model's context.
+
+It is a pure kill switch, not an entitlement: no rules, no targets, on for
+every account. Turning it **Off** removes the toggle from all of them at
+once, and the server stops honouring search requests even from pages still
+showing the button. In a live product you'd add a `tier` rule to make it a
+paid feature; here it stays deliberately ungated, so it demonstrates the
+kill switch on its own.
 
 1. **Create flag** → Name: `Enable Web Search`, Key: `enable-web-search`,
    Type: **Boolean**.
@@ -366,14 +381,21 @@ from a stale page, since it re-checks the flag on every message.
 Offers a "Generate an image" toggle in the chat. When it's on, that turn's
 prompt is sent to Open WebUI's image API (`POST /api/v1/images/generations`)
 instead of the chat model. Open WebUI paints it with the local ComfyUI
-setup and Nimbus shows the picture in the thread. Enabled for every tier in
-this demo.
+setup and Nimbus shows the picture in the thread. On for everyone except the
+`demo-free` account, which is individually gated off — it is the most widely
+shared login, and image generation is the most expensive thing the single GPU
+can be asked to do.
 
 1. **Create flag** → Name: `Enable Image Generation`, Key:
    `enable-image-generation`, Type: **Boolean**.
 2. Turn on **"Available on client-side SDKs"** — the toggle's visibility
    reads it live.
 3. Set the default rule to serve `true`, and toggle the flag **On**.
+4. **Gate the shared demo account:** add an **individual target** — context
+   key `demo-free` → serve `false`. This is deliberately per-account, not a
+   `tier` rule: the point is to keep the GPU's most expensive operation away
+   from the login that gets passed around, not to make image generation a
+   plan feature.
 
 Requires `INFERENCE_PROVIDER=local` and image generation configured in Open
 WebUI (Admin → Settings → Images, engine ComfyUI). On Groq the toggle does
@@ -458,10 +480,20 @@ history it gets.
    - If `tier` is one of `enterprise` → serve **Enterprise Tier**
 4. Set the **Default rule** to serve **Free Tier** — this is what accounts
    with any other (or no) tier attribute fall through to.
-5. Add an **individual target**: context key `demo-pro` → serve **Free
-   Tier**. This deliberately *downgrades* one Pro account rather than
-   upgrading a Free one — see `docs/ARCHITECTURE.md` for why.
-6. Toggle the flag **On**.
+5. Toggle the flag **On**.
+
+Each account now matches its own plan, which is what makes the model menu
+read correctly. Earlier revisions also kept a standing **individual target**
+(`demo-pro` → Free Tier) to show that individual targets beat rules; that was
+retired because a Pro account served the Free config contradicted every other
+part of the demo. The precedence is better shown live — add the target in
+front of an audience and the open tab's model menu collapses with no reload,
+then delete it again.
+
+`maxContextMessages` only takes effect when `enable-conversation-memory` is
+on for that account. Free is excluded from memory above, so the free tier is
+stateless and its `4` is never reached — it is kept as the value that applies
+if memory is ever extended to free.
 
 If you change these variations on a deployment that's still running an
 older build of this app, keep a `"model"` field in each one (the tier's
@@ -473,8 +505,7 @@ only that field, and newer ones ignore it.
 to the chat's toggles. Free has one model and three greyed out, Pro can
 switch between the two 4B models, and Enterprise can pick all four. Each
 reply's "served by …" caption names the model and tier config that
-answered. `demo-pro` should show the **Free** menu, not Pro, because of the
-individual override. Switching to a different model makes the first reply
+answered. Switching to a different model makes the first reply
 slow on a single-GPU home lab, which keeps one model loaded at a time.
 
 #### Experiment + metric (optional)
@@ -485,18 +516,35 @@ If you also want to reproduce the experiment: create a metric (any
 metric's own name and key are yours to choose; the **event key must be
 exactly `clicked-upgrade`**, since that's the string `/api/track-upgrade`
 sends. Then on `chat-tier-config`'s **Default rule**, change its Serve
-action from a static variation to **Experiment**, with **Free Tier** and
-**Pro Tier** as the two arms (leave Enterprise Tier unchecked from "Include
-in experiment" — otherwise a slice of free-tier traffic will randomly get
-routed to your most expensive model), attach the metric, and start it.
-`npm run simulate:experiment [count]` (default 300) generates synthetic
-free-tier traffic against it so the results page has something to show —
-see the script's header comment for details; this is clearly synthetic data,
-not real usage. Only contexts that reach the default rule enter the
-experiment, so `demo-pro` and `demo-enterprise` traffic never counts
-toward it. The result this project's own run produced, and the decision
-drawn from it, are under "Experiment result and decision" in
-`docs/ARCHITECTURE.md`.
+action from a static variation to **Experiment**, attach the metric, and
+start it. `npm run simulate:experiment [count]` (default 300) generates
+synthetic free-tier traffic against it so the results page has something to
+show — see the script's header comment for details; this is clearly
+synthetic data, not real usage. Only contexts that reach the default rule
+enter the experiment, so `demo-pro` and `demo-enterprise` traffic never
+counts toward it.
+
+**Nothing is running on the default rule today** — it serves **Free Tier**
+statically. The experiment that used to live there (`Upgrade Click`, Free
+Tier vs Pro Tier) was stopped on 2026-10-27, because its treatment arm
+handed free accounts the Pro entitlement: those users got the long-context
+model while still being shown "Upgrade to Pro", since the button is gated on
+the session's tier rather than on the served variation. That is sound
+experiment design — the treatment arm has to keep the upsell visible or it
+could never convert — but it makes the tier story unreadable in a demo.
+
+If you want an experiment here that doesn't fight the tiers, vary the
+**upsell** instead of the entitlement: add a fourth variation identical to
+Free Tier but with `"lockedModels": []`, and run Free Tier (control) against
+it. Both arms then get the genuine free product, and the only difference is
+whether the account can see the models its plan excludes. Note that both
+arms carry `"label": "Free"`, so `scripts/simulate-experiment.ts` — which
+picks its conversion rate from that label — has to switch to
+`variationDetail()` and bucket on `detail.variationIndex` to tell them
+apart.
+
+The result the earlier run produced, and the decision drawn from it, are
+under "Experiment result and decision" in `docs/ARCHITECTURE.md`.
 
 ### 4. Create the AI Config
 

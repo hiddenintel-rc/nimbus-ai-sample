@@ -40,12 +40,12 @@ Three design constraints have shaped every decision below:
 | Feature | Status | Flag(s) |
 |---|---|---|
 | Release & remediate (toggle a feature live, roll it back via a trigger) | ✅ Done, tested | `enable-conversation-memory` |
-| Targeting (rule-based + individual overrides) | ✅ Done, tested | `chat-tier-config` |
-| Experimentation (metric + experiment on the same flag) | ✅ Done, significant result and decision recorded below | `chat-tier-config` + `upgrade-interest` metric (`clicked-upgrade` event) |
+| Targeting (rules on `tier`, plus individual targets) | ✅ Done, tested — each account resolves to its own plan; two flags additionally gate the shared `demo-free` login | `chat-tier-config`, `enable-conversation-memory`, `enable-image-generation` |
+| Experimentation (metric + experiment on the same flag) | ⏸️ Harness done and proven; iteration 2 stopped 2026-10-27 so the tiers could be made coherent. Result and decision recorded below | `chat-tier-config` + `upgrade-interest` metric (`clicked-upgrade` event) |
 | AI Configs (managed prompt, parameters and default model) | ✅ Done, tested | `nimbus-assistant` (AgentControl config, separate from the flags above) |
 | Model menu per tier (selectable + greyed-out upsell models) | ✅ Done, tested live for each tier, including refused requests for locked models | `chat-tier-config` + `nimbus-assistant` default |
 | Web search (Open WebUI + Tavily), all tiers | ✅ Done, tested | `enable-web-search` |
-| Image generation, all tiers | ✅ Done. Prompt routes to Open WebUI's image API; a live call returned a PNG in about 50s | `enable-image-generation` |
+| Image generation | ✅ Done. Prompt routes to Open WebUI's image API; a live call returned a PNG in about 50s. On for every account except `demo-free`, individually gated off to keep the GPU's most expensive operation away from the most widely shared login | `enable-image-generation` |
 | Third-party integrations | ⏳ Parked, lowest priority — see "Known gaps" | — |
 | Self-hosted deployment (Docker, beside Open WebUI) | ✅ Full functionality — the one to demo from | — |
 | Vercel deployment | ⚠️ Everything but chat; Cloudflare challenges its requests to the backend. Kept as deploy proof. See "Deployments" | — |
@@ -180,37 +180,31 @@ much history* a tier is allowed (access control), while the
 `nimbus-assistant` AI Config decides *how the assistant talks* and which
 allowed model is the default — see "Key decisions" below.
 
-### 3. How `chat-tier-config` picks a tier — targeting and the experiment
+### 3. How `chat-tier-config` picks a tier — targeting
 
 ```mermaid
 flowchart TD
     accTitle: chat-tier-config evaluation
-    accDescr: LaunchDarkly first checks individual targets, so demo-pro is served Free Tier. Otherwise the tier attribute routes pro to Pro Tier and enterprise to Enterprise Tier. Everyone else reaches the default rule, a 50/50 experiment between Free and Pro. Free-tier users see an Upgrade button whose click is the experiment's conversion metric. A simulator script can generate synthetic traffic into the experiment.
+    accDescr: No individual targets are set, so the tier attribute decides. Pro goes to Pro Tier and enterprise to Enterprise Tier. Everyone else reaches the default rule, which serves Free Tier. Free-tier accounts see an Upgrade button whose click records the upgrade-interest metric. The default rule is also where an experiment is attached when one is running; none is today.
 
     Ctx["Logged-in user's context"]:::nimbus
-    Sim["simulate-experiment.ts<br/>synthetic free-tier users"]:::nimbus
-    Ind{"Individually targeted?"}:::ld
+    Ind{"Individually targeted?<br/>(none set today)"}:::ld
     Rule{"tier attribute"}:::ld
-    Exp{"Default rule:<br/>experiment, 50 / 50"}:::ld
+    Def{"Default rule"}:::ld
 
-    Down["Free Tier<br/>demo-pro, stepped down"]:::variation
     Pro["Pro Tier"]:::variation
     Ent["Enterprise Tier"]:::variation
-    Ctrl["Free Tier<br/>control arm"]:::variation
-    Treat["Pro Tier<br/>treatment arm"]:::variation
+    Free["Free Tier"]:::variation
     Click["Upgrade to Pro click<br/>/api/track-upgrade"]:::nimbus
-    Metric["upgrade-interest metric<br/>experiment results"]:::ld
+    Metric["upgrade-interest metric"]:::ld
 
     Ctx --> Ind
-    Ind -->|"yes · key = demo-pro"| Down
     Ind -->|no| Rule
     Rule -->|pro| Pro
     Rule -->|enterprise| Ent
-    Rule -->|"anything else"| Exp
-    Sim -.-> Exp
-    Exp --> Ctrl
-    Exp --> Treat
-    Ctrl & Treat -.->|"free-tier accounts<br/>see the button"| Click
+    Rule -->|"anything else"| Def
+    Def --> Free
+    Free -.->|"free accounts see the button"| Click
     Click --> Metric
 
     classDef nimbus fill:#2563eb,stroke:#1e3a8a,color:#fff
@@ -218,11 +212,29 @@ flowchart TD
     classDef variation fill:none,stroke:#7c3aed,stroke-width:2px
 ```
 
-Each outlined box is one of the flag's three JSON variations,
-`{ label, maxContextMessages, defaultModel, models, lockedModels }`. LaunchDarkly checks individual
-targets before rules, which is why `demo-pro` lands on Free despite its
-`pro` tier. Enterprise Tier is deliberately left out of the experiment so
-free-tier traffic can never be randomly routed to the most expensive model.
+Each outlined box is one of the flag's JSON variations,
+`{ label, maxContextMessages, defaultModel, models, lockedModels }`. As of
+2026-10-27 each demo account resolves to its own plan — verified by a
+read-only evaluation (`sendEvents: false`, so no exposures were recorded):
+
+| Account | Reason | Variation | Models | `maxContextMessages` |
+|---|---|---|---|---|
+| `demo-free` | `FALLTHROUGH` | Free Tier | 4B | 4 (never reached — see below) |
+| `demo-pro` | `RULE_MATCH` (rule 0) | Pro Tier | 4B, 4B-128k | 20 |
+| `demo-enterprise` | `RULE_MATCH` (rule 1) | Enterprise Tier | all four | 50 |
+
+LaunchDarkly still checks individual targets before rules; there simply are
+none set now. The default rule is also the slot an experiment attaches to,
+which is why the free tier is the only one an experiment on this flag can
+reach — `demo-pro` and `demo-enterprise` match a rule first and never enter
+one.
+
+**`maxContextMessages` is conditional on memory.** `/api/chat` only applies
+the cap when `enable-conversation-memory` is on for that context; with memory
+off it sends the latest message alone. Free is excluded from memory, so the
+free tier is stateless and its `4` is never exercised. A free account can
+therefore send any number of messages without hitting a cap — there is no
+accumulating history for the cap to trim.
 
 ### 4. Live changes without a redeploy — release and remediate
 
@@ -416,15 +428,26 @@ page is deliberately open — someone should be able to see what this is
 without credentials — while every path that reaches a model is gated in the
 route itself. A gate that lives in the UI would be no gate at all here.
 
-**Individual targeting is downgrade-only, not an upgrade.** The first version
-targeted `demo-free` → Enterprise Tier as a "surprise upgrade" story. That was
-wrong: the `demo-free` login was printed on the public login page at the
-time, so it would have handed out unlimited free access to the most expensive
-model to anyone who found the repo — and even with the logins now private, a
-widely shared demo account is the wrong one to grant extra access to. The override now targets `demo-pro` →
-Free Tier instead ("stepped down for exceeding fair use") — a realistic
-SaaS pattern that proves individual targeting overrides a rule without ever
-granting more access than a tier's own public documentation already implies.
+**Individual targeting is downgrade-only, not an upgrade — and is no longer
+standing.** The first version targeted `demo-free` → Enterprise Tier as a
+"surprise upgrade" story. That was wrong: the `demo-free` login was printed on
+the public login page at the time, so it would have handed out unlimited free
+access to the most expensive model to anyone who found the repo — and even
+with the logins now private, a widely shared demo account is the wrong one to
+grant extra access to. It was replaced by `demo-pro` → Free Tier ("stepped
+down for exceeding fair use"), which proved the precedence without granting
+anyone extra access.
+
+That target was **removed on 2026-10-27**. It worked as a mechanism and
+failed as a demo: a Pro account served the Free config contradicted the
+account badge, the model menu (which offered to upgrade a Pro user *to Pro*),
+and the reply caption all at once, and it collided with the experiment then
+running on the default rule, which was handing the free account the Pro
+config at the same time. The two together read as the tiers being swapped.
+The downgrade-only principle still holds for any future target; precedence is
+now demonstrated live instead — adding the target in front of an audience
+collapses the open tab's model menu with no reload, which shows both
+individual-target precedence and streaming updates in one move.
 
 **AI Config and chat-tier-config are two systems with two different jobs, not
 one duplicated.** `chat-tier-config` stays the access-control layer — which
@@ -468,11 +491,11 @@ the backend credentials are never published.
 | Key | Type | Client-side? | Purpose |
 |---|---|---|---|
 | `sanity-check` | boolean | yes | Early connectivity check only; removed from code once real flags landed. Safe to delete from the dashboard. |
-| `enable-conversation-memory` | boolean | yes (needs the live badge) | Release & remediate demo. Gates whether `/api/chat` forwards conversation history or treats every message as stateless. Has a Generic trigger wired to turn it off, for the remediation demo. |
-| `new-logo` | boolean | yes (needs the live swap) | Gates the redesigned cloud + wordmark logo (`components/Logo.tsx`) vs. the original plain text wordmark, via `components/BrandLogo.tsx`. A second, independent example of the release/remediate pattern — applied to a brand/visual rollout instead of a product feature, which is a genuinely common real-world use of flags. Defaults to the new logo if the flag is missing. |
-| `enable-web-search` | boolean | yes (shows/hides the toggle live) | Kill switch + entitlement for web search. `/api/chat` only adds Open WebUI's `features.web_search` when this flag is on for the context, the user's toggle asked for it, and the provider is local — the browser can request search but never force it. Serves `true` to every tier for the demo; a `tier` rule would restrict it in a live product. |
-| `enable-image-generation` | boolean | yes (shows/hides the toggle live) | Kill switch for image generation. When the flag is on, the user's toggle is on, and the provider is local, `/api/chat` sends that turn's prompt to Open WebUI `POST /api/v1/images/generations` instead of the chat model. The returned file is fetched server-side and shown in the thread. Serves `true` to every tier for the demo. Editing a previous image is not wired yet. |
-| `chat-tier-config` | JSON (3 variations: `free` / `pro` / `enterprise`) | yes (the model menu updates live; the server re-checks every request) | Targeting demo. Each variation is `{ label, maxContextMessages, defaultModel, models, lockedModels }`: Free selects the 4B; Pro the 4B and the 4B long-context; Enterprise those plus Coder-30B and Qwen 3.8-27B. `lockedModels` are shown disabled with the plan that unlocks them and are never accepted by `/api/chat`. Malformed or older single-model values fall back safely (`normalizeTierConfig`). Rule-based on the context's `tier` attribute; one individual target (`demo-pro` → `free`, a downgrade). Its Default rule also hosts the experiment below. |
+| `enable-conversation-memory` | boolean | yes (needs the live badge) | Release & remediate demo, and a paid-plan entitlement. Gates whether `/api/chat` forwards conversation history or treats every message as stateless. Has a Generic trigger wired to turn it off, for the remediation demo. Serves `true` by default, with `demo-free` served `false` so memory reads as a paid feature. The exclusion is currently an **individual target on the `demo-free` key**, so it gates that one account; a second free account would still get memory. Unlike the image-generation gate, which is per-account by intent, this one is described as a plan boundary — a `tier is one of free` rule would make it one. |
+| `new-logo` | boolean | yes (needs the live swap) | **Currently toggled Off**, so every account is served `false` and the header shows the plain text wordmark. Gates the redesigned cloud + wordmark logo (`components/Logo.tsx`) vs. the original plain text wordmark, via `components/BrandLogo.tsx`. A second, independent example of the release/remediate pattern — applied to a brand/visual rollout instead of a product feature, which is a genuinely common real-world use of flags. Defaults to the new logo if the flag is missing. |
+| `enable-web-search` | boolean | yes (shows/hides the toggle live) | Pure kill switch — no rules, no targets, so Off removes it for every account at once. `/api/chat` only adds Open WebUI's `features.web_search` when this flag is on for the context, the user's toggle asked for it, and the provider is local — the browser can request search but never force it. Serves `true` to all three accounts (verified); a `tier` rule would make it an entitlement in a live product, but it is deliberately not one here. |
+| `enable-image-generation` | boolean | yes (shows/hides the toggle live) | Kill switch for image generation, and a paid-plan entitlement. When the flag is on, the user's toggle is on, and the provider is local, `/api/chat` sends that turn's prompt to Open WebUI `POST /api/v1/images/generations` instead of the chat model. The returned file is fetched server-side and shown in the thread. Serves `true` by default, with an individual target on the `demo-free` key serving `false`. That is deliberately per-account rather than a `tier` rule: image generation is the most expensive thing the single GPU can be asked to do, and `demo-free` is the login that gets shared most widely. Editing a previous image is not wired yet. |
+| `chat-tier-config` | JSON (4 variations; three in use: `free` / `pro` / `enterprise`) | yes (the model menu updates live; the server re-checks every request) | Targeting demo. Each variation is `{ label, maxContextMessages, defaultModel, models, lockedModels }`: Free selects the 4B; Pro the 4B and the 4B long-context; Enterprise those plus Coder-30B and Qwen 3.8-27B. `lockedModels` are shown disabled with the plan that unlocks them and are never accepted by `/api/chat`. Malformed or older single-model values fall back safely (`normalizeTierConfig`). Rule-based on the context's `tier` attribute, with no individual targets as of 2026-10-27; the Default rule serves Free Tier and is the slot an experiment attaches to. A fourth variation, `Enterprise Tier - No 27B`, exists in the environment but is served by nothing. |
 
 Context sent to LaunchDarkly: `{ kind: "user", key: <demo account id>, email,
 tier, accountAgeDays }`, built in `lib/ld-server.ts#buildUserContext` from the
@@ -481,16 +504,36 @@ the same server-built context (anonymous when logged out), so live badges
 evaluate for the same user the server does. Only `key` and `tier` are matched
 on today: `accountAgeDays` is sent so a second attribute is there to target
 on, but no rule uses it. It is kept as a ready-made extension — a loyalty
-rule like `accountAgeDays` ≥ 365 → Pro Tier, which `demo-pro`'s individual
-target would still override, demonstrating precedence a second way.
+rule such as `accountAgeDays` ≥ 365 → Pro Tier, which would promote
+`demo-pro` (420 days) and `demo-enterprise` (1,100) but not `demo-free` (12).
 
-**Experiment:** on `chat-tier-config`'s Default rule — Free Tier (control)
-vs. Pro Tier, 50/50, among contexts that reach that rule (i.e. `tier` isn't
-`pro` or `enterprise`). Enterprise Tier is explicitly excluded from the
-experiment's variation set entirely (not just weighted low) — an earlier
-pass defaulted to a 3-way split across all of the flag's variations, which
-would have randomly routed a slice of free-tier traffic to the most
-expensive model. Primary metric: `upgrade-interest`, built on the `clicked-upgrade` event (Count/average-per-user,
+**Experiment:** none is running. `Upgrade Click` ran on `chat-tier-config`'s
+Default rule — Free Tier (control) vs. Pro Tier, 50/50, among contexts that
+reach that rule (i.e. `tier` isn't `pro` or `enterprise`). Enterprise Tier was
+explicitly excluded from the experiment's variation set entirely (not just
+weighted low) — an earlier pass defaulted to a 3-way split across all of the
+flag's variations, which would have randomly routed a slice of free-tier
+traffic to the most expensive model.
+
+**Iteration 2 was stopped on 2026-10-27, for design, not for a result.** Its
+treatment arm served free accounts the Pro config, so a free account held the
+long-context model while still being shown "Upgrade to Pro" — the button is
+gated on the session's `tier` ([app/page.tsx](../app/page.tsx)), not on the
+served variation. That is correct experiment design (hide the upsell in the
+treatment arm and it can never convert, which would measure nothing), but
+combined with the `demo-pro` downgrade then in place it made the two accounts
+look swapped, and the tier story unreadable. LaunchDarkly will again record a
+"shipped variation" for the iteration; as with Iteration 1, that reflects the
+stop, not an outcome.
+
+**A design that doesn't fight the tiers:** vary the *upsell* rather than the
+entitlement — a variation identical to Free Tier but with `lockedModels: []`,
+run against Free Tier. Both arms then receive the genuine free product and
+differ only in whether the account can see what its plan excludes, so the
+Upgrade button stays honest in both. Note both arms would carry
+`label: "Free"`, which `scripts/simulate-experiment.ts` uses to pick its
+synthetic conversion rate; it would need to bucket on
+`variationDetail().variationIndex` instead. Primary metric: `upgrade-interest`, built on the `clicked-upgrade` event (Count/average-per-user,
 which behaves like a conversion rate here since the UI's upgrade button only
 fires it once per account). `scripts/simulate-experiment.ts` generates
 synthetic free-tier sessions against it — real LD exposures and events, but
