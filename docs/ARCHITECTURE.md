@@ -478,7 +478,11 @@ Context sent to LaunchDarkly: `{ kind: "user", key: <demo account id>, email,
 tier, accountAgeDays }`, built in `lib/ld-server.ts#buildUserContext` from the
 NextAuth session — never from client input. The browser's client SDK is given
 the same server-built context (anonymous when logged out), so live badges
-evaluate for the same user the server does.
+evaluate for the same user the server does. Only `key` and `tier` are matched
+on today: `accountAgeDays` is sent so a second attribute is there to target
+on, but no rule uses it. It is kept as a ready-made extension — a loyalty
+rule like `accountAgeDays` ≥ 365 → Pro Tier, which `demo-pro`'s individual
+target would still override, demonstrating precedence a second way.
 
 **Experiment:** on `chat-tier-config`'s Default rule — Free Tier (control)
 vs. Pro Tier, 50/50, among contexts that reach that rule (i.e. `tier` isn't

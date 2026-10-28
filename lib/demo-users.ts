@@ -6,7 +6,7 @@ export type DemoUser = {
   id: string;
   email: string;
   tier: Tier;
-  /** Second context attribute, alongside tier, for rule-based targeting. */
+  /** Second targetable attribute alongside tier. Sent, but no rule uses it yet. */
   accountAgeDays: number;
 };
 

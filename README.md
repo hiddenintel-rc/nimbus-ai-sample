@@ -480,20 +480,23 @@ slow on a single-GPU home lab, which keeps one model loaded at a time.
 #### Experiment + metric (optional)
 
 If you also want to reproduce the experiment: create a metric (any
-"+ Create" menu → Metric) named e.g. `Upgrade click`, Event key
-`clicked-upgrade`, Custom event. Then on `chat-tier-config`'s **Default
-rule**, change its Serve action from a static variation to **Experiment**,
-with **Free Tier** and **Pro Tier** as the two arms (leave Enterprise Tier
-unchecked from "Include in experiment" — otherwise a slice of free-tier
-traffic will randomly get routed to your most expensive model), attach the
-metric, and start it. `npm run simulate:experiment [count]` (default 300)
-generates synthetic free-tier traffic against it so the results page has
-something to show — see the script's header comment for details; this is
-clearly synthetic data, not real usage. Only contexts that reach the
-default rule enter the experiment, so `demo-pro` and `demo-enterprise`
-traffic never counts toward it. The result this project's own run produced,
-and the decision drawn from it, are under "Experiment result and decision"
-in `docs/ARCHITECTURE.md`.
+"+ Create" menu → Metric) — this project's is named `Upgrade interest`, key
+`upgrade-interest` — with Event key `clicked-upgrade`, Custom event. The
+metric's own name and key are yours to choose; the **event key must be
+exactly `clicked-upgrade`**, since that's the string `/api/track-upgrade`
+sends. Then on `chat-tier-config`'s **Default rule**, change its Serve
+action from a static variation to **Experiment**, with **Free Tier** and
+**Pro Tier** as the two arms (leave Enterprise Tier unchecked from "Include
+in experiment" — otherwise a slice of free-tier traffic will randomly get
+routed to your most expensive model), attach the metric, and start it.
+`npm run simulate:experiment [count]` (default 300) generates synthetic
+free-tier traffic against it so the results page has something to show —
+see the script's header comment for details; this is clearly synthetic data,
+not real usage. Only contexts that reach the default rule enter the
+experiment, so `demo-pro` and `demo-enterprise` traffic never counts
+toward it. The result this project's own run produced, and the decision
+drawn from it, are under "Experiment result and decision" in
+`docs/ARCHITECTURE.md`.
 
 ### 4. Create the AI Config
 
