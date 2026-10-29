@@ -15,10 +15,11 @@ import {
 type ServedBy = { model: string; modelLabel: string; label: string };
 type GeneratedImage = { src: string; alt: string };
 type TokenUsage = { promptTokens: number; completionTokens: number; totalTokens: number };
+type Feedback = 'positive' | 'negative';
 type StreamEvent =
   | { type: 'meta'; servedBy: ServedBy; webSearch: boolean; maxTokens?: number }
   | { type: 'delta'; text: string; completionTokens: number; promptTokens?: number }
-  | { type: 'done'; citations: Citation[]; usage?: TokenUsage }
+  | { type: 'done'; citations: Citation[]; usage?: TokenUsage; feedbackToken?: string }
   | { type: 'image'; reply: string; images: GeneratedImage[] }
   | { type: 'error'; error: string };
 
@@ -49,6 +50,7 @@ function parseStreamEvent(raw: string): StreamEvent | null {
     citations?: unknown;
     reply?: unknown;
     images?: unknown;
+    feedbackToken?: unknown;
   };
   if (
     event.type === 'meta' &&
@@ -95,7 +97,12 @@ function parseStreamEvent(raw: string): StreamEvent | null {
       promptTokens !== undefined && completionTokens !== undefined && totalTokens !== undefined
         ? { promptTokens, completionTokens, totalTokens }
         : undefined;
-    return { type: 'done', citations, ...(usage ? { usage } : {}) };
+    return {
+      type: 'done',
+      citations,
+      ...(usage ? { usage } : {}),
+      ...(typeof event.feedbackToken === 'string' ? { feedbackToken: event.feedbackToken } : {}),
+    };
   }
   if (event.type === 'image' && Array.isArray(event.images)) {
     const images = event.images.filter(
@@ -157,6 +164,9 @@ type Message = {
   promptTokens?: number;
   /** Generated tokens so far, including reasoning. */
   completionTokens?: number;
+  /** Signed token tying a 👍 / 👎 to the AI Config run that wrote this reply. */
+  feedbackToken?: string;
+  feedback?: Feedback;
 };
 
 function tokenMeter(message: Message): string | null {
@@ -181,6 +191,39 @@ function replyStatus(messages: Message[]): string | null {
     return parts.join(' · ');
   }
   return null;
+}
+
+/** 👍 / 👎 under a reply: the prompt experiment's primary metric. */
+function FeedbackButtons({
+  value,
+  onRate,
+}: {
+  value?: Feedback;
+  onRate: (kind: Feedback) => void;
+}) {
+  const button = (kind: Feedback, label: string, symbol: string) => (
+    <button
+      type="button"
+      aria-label={label}
+      aria-pressed={value === kind}
+      disabled={value !== undefined}
+      onClick={() => onRate(kind)}
+      className={
+        value === kind
+          ? 'rounded-full bg-zinc-200 px-1.5 py-0.5 dark:bg-zinc-800'
+          : 'rounded-full px-1.5 py-0.5 opacity-60 hover:opacity-100 disabled:opacity-30 disabled:hover:opacity-30'
+      }
+    >
+      {symbol}
+    </button>
+  );
+  return (
+    <div className="mt-1 flex items-center gap-1 text-xs text-zinc-500 dark:text-zinc-500">
+      {value ? <span>Thanks for the feedback</span> : <span>Helpful?</span>}
+      {button('positive', 'Helpful', '👍')}
+      {button('negative', 'Not helpful', '👎')}
+    </div>
+  );
 }
 
 export default function ChatPanel({
@@ -336,6 +379,7 @@ export default function ChatPanel({
             next[next.length - 1] = {
               ...last,
               citations: event.citations,
+              ...(event.feedbackToken ? { feedbackToken: event.feedbackToken } : {}),
               ...(event.usage
                 ? {
                     promptTokens: event.usage.promptTokens,
@@ -364,6 +408,28 @@ export default function ChatPanel({
     } finally {
       setIsLoading(false);
       setReceiving(false);
+    }
+  }
+
+  // One rating per reply. Shown as given straight away and taken back if the
+  // request fails, so a slow round trip doesn't invite a second click.
+  async function sendFeedback(index: number, kind: Feedback) {
+    const token = messages[index]?.feedbackToken;
+    if (!token || messages[index].feedback) return;
+    const setFeedback = (feedback: Feedback | undefined) =>
+      setMessages((prev) =>
+        prev.map((message, i) => (i === index ? { ...message, feedback } : message)),
+      );
+    setFeedback(kind);
+    try {
+      const response = await fetch('/api/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token, kind }),
+      });
+      if (!response.ok) setFeedback(undefined);
+    } catch {
+      setFeedback(undefined);
     }
   }
 
@@ -412,6 +478,12 @@ export default function ChatPanel({
                 message.content
               )}
             </div>
+            {message.feedbackToken && (
+              <FeedbackButtons
+                value={message.feedback}
+                onRate={(kind) => sendFeedback(index, kind)}
+              />
+            )}
           </div>
         ))}
         {isLoading && !receiving && (

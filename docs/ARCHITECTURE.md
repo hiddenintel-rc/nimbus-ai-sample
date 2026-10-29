@@ -41,8 +41,9 @@ Three design constraints have shaped every decision below:
 |---|---|---|
 | Release & remediate (toggle a feature live, roll it back via a trigger) | ✅ Done, tested | `enable-conversation-memory` |
 | Targeting (individual target, `tier` rule and percentage rollout on one component) | ✅ Built — the landing page's "Compare plans" block reaches `demo-pro` by individual target, free accounts by rule, and a share of logged-out visitors by rollout. `chat-tier-config` resolves each account to its own plan by rule, and two flags additionally gate the shared `demo-free` login | `show-plan-comparison`, `chat-tier-config`, `enable-conversation-memory`, `enable-image-generation` |
-| Experimentation (metric + experiment on the same flag) | ⏸️ Harness done and proven; iteration 2 stopped 2026-10-27 so the tiers could be made coherent. Result and decision recorded below | `chat-tier-config` + `upgrade-interest` metric (`clicked-upgrade` event) |
+| Experimentation (metric + experiment on the targeting flag) | ⏳ Running since 2026-10-29 on `show-plan-comparison`'s free-tier rule (Compare plans shown vs not); synthetic traffic sent, readout pending. The earlier `chat-tier-config` experiment's result and decision are recorded below | `show-plan-comparison` + `upgrade-interest` metric (`clicked-upgrade` event) |
 | AI Configs (managed prompt, parameters and default model) | ✅ Done, tested | `nimbus-assistant` (AgentControl config, separate from the flags above) |
+| AI Config experiment (prompt variants; 👍 / 👎, LLM judge, token and latency on Monitoring) | 🛠️ Built in the app: per-reply feedback through signed resumption tokens, and judges run from the variation's judge configuration. Waits on the treatment variation, the judge config and a start in the dashboard | `nimbus-assistant` + `nimbus-judge-helpfulness` (judge mode) |
 | Model menu per tier (selectable + greyed-out upsell models) | ✅ Done, tested live for each tier, including refused requests for locked models | `chat-tier-config` + `nimbus-assistant` default |
 | Web search (Open WebUI + Tavily), all tiers | ✅ Done, tested | `enable-web-search` |
 | Image generation | ✅ Done. Prompt routes to Open WebUI's image API; a live call returned a PNG in about 50s. On for every account except `demo-free`, individually gated off to keep the GPU's most expensive operation away from the most widely shared login | `enable-image-generation` |
@@ -341,7 +342,9 @@ next chat reply reflects it, with no redeploy.
 | Server-side first render of the model menu | `app/page.tsx` |
 | Model backend switch (self-hosted / Groq) | `lib/inference.ts` |
 | Upgrade click → conversion metric | `components/UpgradeCta.tsx`, `app/api/track-upgrade/route.ts` |
-| Synthetic experiment traffic | `scripts/simulate-experiment.ts` |
+| Reply feedback (👍 / 👎) | `components/ChatPanel.tsx`, `app/api/feedback/route.ts`, `lib/feedback-token.ts` |
+| LLM judge on sampled replies | `lib/judge.ts`, called from `app/api/chat/route.ts` |
+| Synthetic experiment traffic | `scripts/simulate-experiment.ts` (Compare plans), `scripts/simulate-ai-experiment.ts` (prompt) |
 | Self-hosted deployment | `Dockerfile`, `docker-compose.yml`, `next.config.ts` |
 
 The home-lab side of the model backend (Cloudflare Tunnel → Access with a
@@ -607,7 +610,22 @@ on, but no rule uses it. It is kept as a ready-made extension — a loyalty
 rule such as `accountAgeDays` ≥ 365 → Pro Tier, which would promote
 `demo-pro` (420 days) and `demo-enterprise` (1,100) but not `demo-free` (12).
 
-**Experiment:** none is running. `Upgrade Click` ran on `chat-tier-config`'s
+**Experiment, now:** `Compare Plans - Upgrade` has run on
+`show-plan-comparison`'s free-tier rule (Rule 1) since 2026-10-29. Control
+is `false` (no block), treatment `true`, 50 / 50, with 100% of free contexts
+in the experiment; primary metric `upgrade-interest`; frequentist with
+sequential testing, significance 0.05, two-sided. It is the upsell-varying
+design described below, run on the flag Part 2's targeting now lives on, so
+targeting and experiment share one flag as intended. Both arms get the
+genuine free product and the Upgrade button, and differ only in whether
+they see the plan comparison. It runs on the rule rather than the default
+rule because the default rule's audience (logged-out and Enterprise
+visitors) never sees an Upgrade button. While it runs, `demo-free` is
+bucketed into control and does not see the block. 4,000 synthetic
+free-tier sessions were sent on 2026-10-29 (`npm run simulate:experiment`,
+4% vs 7% click rates); the readout is pending.
+
+**Experiment, earlier:** `Upgrade Click` ran on `chat-tier-config`'s
 Default rule — Free Tier (control) vs. Pro Tier, 50/50, among contexts that
 reach that rule (i.e. `tier` isn't `pro` or `enterprise`). Enterprise Tier was
 explicitly excluded from the experiment's variation set entirely (not just
@@ -630,10 +648,9 @@ stop, not an outcome.
 entitlement — a variation identical to Free Tier but with `lockedModels: []`,
 run against Free Tier. Both arms then receive the genuine free product and
 differ only in whether the account can see what its plan excludes, so the
-Upgrade button stays honest in both. Note both arms would carry
-`label: "Free"`, which `scripts/simulate-experiment.ts` uses to pick its
-synthetic conversion rate; it would need to bucket on
-`variationDetail().variationIndex` instead. Primary metric: `upgrade-interest`, built on the `clicked-upgrade` event (Count/average-per-user).
+Upgrade button stays honest in both. The experiment now running applies the
+same idea to the "Compare plans" block on `show-plan-comparison` instead of
+a fourth `chat-tier-config` variation. Primary metric: `upgrade-interest`, built on the `clicked-upgrade` event (Count/average-per-user).
 That is not a conversion rate for real users. Each Upgrade button fires once
 and then shows a thank-you note, but the state lives in the component: a
 reload brings the button back, and reaching the message wall shows a second,
@@ -684,6 +701,67 @@ dashboard mid-session and watching the very next response change tone with
 no redeploy. The route records token usage, success, duration, and time to
 first token on `aiConfig.createTracker()` when the reply stream ends.
 
+**AI Config experiment: prompt variants, judged two ways.** Hypothesis: a
+tighter, structured system prompt (`structured-concise`: answer in the first
+sentence, at most three bullets, clarify only when genuinely ambiguous) gets
+more replies rated helpful *and* produces fewer output tokens. Only the
+prompt differs between arms; model and temperature are held equal, so a
+difference is attributable to the prompt. The audience is everyone who
+chats (the config's default rule), randomized by user.
+
+Quality is the experiment's question; cost and latency are watched beside
+it, because on a single home GPU they are the same resource: every output
+token is time someone waits and capacity nobody else gets. They are left out
+of the experiment's metrics to keep the readout to two, and read per
+variation on the AI Config's Monitoring tab instead.
+
+| Metric | Source | Role |
+|---|---|---|
+| Positive feedback (`$ld:ai:feedback:user:positive`) | 👍 / 👎 under each reply | Primary |
+| Judge score (the judge config's metric key) | `nimbus-judge-helpfulness` on a sample of replies | Secondary: quality signal with far more coverage than voluntary ratings |
+| Output tokens, time to first token, errors | The tracker, on every reply | Not experiment metrics; compared per variation on Monitoring. A "better" prompt that is slower or costlier is not a win here |
+
+Three decisions behind it:
+
+- **Feedback reaches the exact run, through a signed resumption token.**
+  Feedback arrives in a later request than the reply. Re-evaluating the
+  config at that point would credit the variation the user is in *now*,
+  which is wrong after any edit or iteration change. The SDK's tracker
+  instead exposes a resumption token naming its run, variation and version,
+  and `aiClient.createTracker(token)` rebuilds that tracker. The chat route
+  sends the token with the reply's `done` event and `/api/feedback` turns it
+  back into the tracker. The token is only base64, so a browser could
+  rewrite it to credit the other arm; `lib/feedback-token.ts` signs it with
+  `AUTH_SECRET`, bound to the account it was issued to, and the feedback
+  route refuses anything else. The context still comes from the session.
+- **The judge is configured in LaunchDarkly and run on this app's
+  inference.** Each variation's judge configuration (attached judges and
+  their sampling rate) comes through `completionConfig()`, and the judge
+  itself is an AI Config in judge mode with its own rubric and
+  temperature. Its model field is ignored: the judge form only lists hosted
+  providers, which this app never calls. The
+  SDK's `Judge` class needs a Runner; LaunchDarkly's provider packages pin
+  an older `openai` than this app (the same conflict as above), so
+  `lib/judge.ts` supplies a one-method Runner over `chatCompletion()`. The
+  score is recorded with `trackJudgeResult()` on the reply's own tracker,
+  so it lands on the same variation as the reply's tokens and feedback. The
+  judge sees the user and assistant turns, not the system prompt, since the
+  system prompt is the thing that differs between arms.
+- **The judge never forces a model swap.** It runs on the variation's own
+  model, and only when that model wrote the reply (not a model the user
+  picked instead), after the reply is delivered, on the
+  variation's sampling rate (10% here). The home lab keeps one model loaded
+  at a time; judging a Coder-30B reply on the 4B would unload the model the
+  user is mid-conversation with. It also keeps every score from one judge
+  model. Replies from other models are simply not judged, which affects
+  both arms alike.
+
+Volume comes from `scripts/simulate-ai-experiment.ts`, which calls no
+model: it records made-up tokens, latency, feedback and judge scores on real
+trackers, through the same SDK calls the app makes, and is documented as
+synthetic. Real chats on the self-hosted deployment, real ratings included,
+feed the same experiment.
+
 ## Known gaps (intentional, not forgotten)
 
 - **The message allowance resets on reload.** It is counted from the
@@ -705,7 +783,19 @@ first token on `aiConfig.createTracker()` when the reply stream ends.
   and the flag's model IDs would need swapping for Groq ones (see the README).
 - **AI metrics are attributed to the AI Config's model.** When a user picks
   a different model from the menu, its token usage is still reported under
-  `nimbus-assistant`'s variation.
+  `nimbus-assistant`'s variation. In the prompt experiment this affects both
+  arms equally, since assignment is random, but it widens the token spread.
+- **Feedback is one per reply in the UI, not on the server.** The buttons
+  lock after one rating, but a signed token can be posted again by hand, and
+  each post records again. Making a rating single-use needs storage for spent
+  tokens, the same gap as the message allowance.
+- **The judge's output format is asked for, not enforced.** The SDK's judge
+  expects structured output; this backend is a plain chat endpoint, so the
+  JSON shape is requested in the prompt and parsed leniently. A reply it
+  can't read is logged and dropped, never guessed into a score.
+- **A judged reply holds the GPU briefly.** The judge runs after the reply
+  is delivered, but a message sent in the next few seconds queues behind it.
+  The sampling rate is the control for this.
 - **Integrations parked, not abandoned.** Researched
   GitHub Code References as the best fit — it would link each flag/config
   key directly to the exact lines using it in this repo. Found a real

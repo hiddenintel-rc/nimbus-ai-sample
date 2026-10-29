@@ -17,6 +17,8 @@ import {
   resolveModel,
 } from '@/lib/tier-config';
 import { AI_CONFIG_KEY, DEFAULT_AI_CONFIG } from '@/lib/ai-config';
+import { signFeedbackToken } from '@/lib/feedback-token';
+import { runJudges } from '@/lib/judge';
 import { modelContextTokens } from '@/lib/model-context';
 import type { LDAIConfigTracker } from '@launchdarkly/server-sdk-ai';
 
@@ -146,7 +148,7 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json().catch(() => null);
-  const history = isValidHistory(body?.messages) ? body.messages : null;
+  const history: IncomingMessage[] | null = isValidHistory(body?.messages) ? body.messages : null;
 
   if (!history) {
     return NextResponse.json({ error: 'messages is required' }, { status: 400 });
@@ -252,9 +254,11 @@ export async function POST(request: Request) {
   // every turn is treated as a fresh conversation, same as before that flag
   // existed. With memory on, the tier config's context window caps how much
   // history this account's plan is allowed to carry.
-  const relevantHistory = memoryEnabled
-    ? history.slice(-tierConfig.maxContextMessages)
-    : history.slice(-1);
+  // Only role and content go upstream. The browser's copy of each message
+  // also carries UI state (captions, citations, feedback tokens).
+  const relevantHistory: ChatMessage[] = (
+    memoryEnabled ? history.slice(-tierConfig.maxContextMessages) : history.slice(-1)
+  ).map(({ role, content }) => ({ role, content }));
 
   const systemMessages: ChatMessage[] =
     aiConfig.enabled && aiConfig.messages?.length
@@ -270,6 +274,8 @@ export async function POST(request: Request) {
   const temperature = temperatureParameter(aiConfig.model?.parameters?.temperature);
   const servedBy: ServedBy = { model: model.id, modelLabel: model.label, label: tierConfig.label };
   const tracker = aiConfig.enabled ? aiConfig.createTracker() : null;
+  // Lets a later 👍 / 👎 reach this exact run — see lib/feedback-token.ts.
+  const feedbackToken = tracker ? signFeedbackToken(tracker.resumptionToken, session.user.id) : undefined;
   const startedAt = Date.now();
   // Cancelled when the browser disconnects or this response stream is cancelled.
   const upstream = new AbortController();
@@ -326,6 +332,7 @@ export async function POST(request: Request) {
             type: 'done',
             citations: result.citations ?? [],
             ...(result.usage ? { usage: result.usage } : {}),
+            ...(feedbackToken ? { feedbackToken } : {}),
           }),
         );
       } catch (error) {
@@ -352,6 +359,20 @@ export async function POST(request: Request) {
           controller.close();
         } catch {
           // Already closed by the client.
+        }
+        // After the reply is delivered, so the user never waits on the judge.
+        // It does occupy the GPU for a moment, which is why the variation's
+        // sampling rate decides how many replies are judged.
+        if (tracker && !failed && result && result.reply.trim().length > 0) {
+          await runJudges({
+            aiClient,
+            aiConfig,
+            context,
+            tracker,
+            history: relevantHistory,
+            reply: result.reply,
+            servedModel: model.id,
+          });
         }
         await flushMetrics(tracker);
       }

@@ -77,9 +77,13 @@ didn't set it up yourself.
   window and message allowance each plan gets (`chat-tier-config`), and
   individual targets on the `demo-free` key switch image generation and
   memory off for that one login
-- An experiment harness on that same flag — a conversion metric and a
-  traffic simulator for generating sample data. No experiment is running
-  today; see "Experiment + metric" for why the last one was stopped
+- An experiment on that same component flag: does seeing "Compare plans"
+  make free users click Upgrade more? A conversion metric, an experiment on
+  the free-tier rule, and a traffic simulator for sample data
+- A prompt experiment on the AI Config, scored two ways at once: 👍 / 👎
+  on each reply (tied to the exact run that wrote it), and an LLM judge that
+  rates replies; tokens and latency per variation are on the config's
+  Monitoring tab
 - Login gating, with the actual enforcement server-side, not just a hidden
   UI element
 - A model menu per tier: Free gets the 4B, Pro adds the long-context 4B,
@@ -151,7 +155,8 @@ for you, the note says what changes.
 |---|---|
 | `npm run dev` | Start the app locally |
 | `npm run build` | Production build (also type-checks) |
-| `npm run simulate:experiment [count]` | Generate synthetic free-tier traffic against the experiment below |
+| `npm run simulate:experiment [count]` | Generate synthetic free-tier traffic against the Compare plans experiment (default 4,000 sessions) |
+| `npm run simulate:ai-experiment [count]` | Generate synthetic chat metrics against the AI Config prompt experiment (default 4,000 sessions) |
 
 ---
 
@@ -611,41 +616,43 @@ slow on a single-GPU home lab, which keeps one model loaded at a time.
 
 #### Experiment + metric (optional)
 
-If you also want to reproduce the experiment: create a metric (any
-"+ Create" menu → Metric) — this project's is named `Upgrade interest`, key
-`upgrade-interest` — with Event key `clicked-upgrade`, Custom event. The
-metric's own name and key are yours to choose; the **event key must be
-exactly `clicked-upgrade`**, since that's the string `/api/track-upgrade`
-sends. Then on `chat-tier-config`'s **Default rule**, change its Serve
-action from a static variation to **Experiment**, attach the metric, and
-start it. `npm run simulate:experiment [count]` (default 300) generates
-synthetic free-tier traffic against it so the results page has something to
-show — see the script's header comment for details; this is clearly
-synthetic data, not real usage. Only contexts that reach the default rule
-enter the experiment, so `demo-pro` and `demo-enterprise` traffic never
-counts toward it.
+The experiment runs on `show-plan-comparison`, the flag the targeting
+example is built on: does seeing the "Compare plans" block make free users
+click **Upgrade to Pro** more often?
 
-**Nothing is running on the default rule today** — it serves **Free Tier**
-statically. The experiment that used to live there (`Upgrade Click`, Free
-Tier vs Pro Tier) was stopped on 2026-10-27, because its treatment arm
-handed free accounts the Pro entitlement: those users got the long-context
-model while still being shown "Upgrade to Pro", since the button is gated on
-the session's tier rather than on the served variation. That is sound
-experiment design — the treatment arm has to keep the upsell visible or it
-could never convert — but it makes the tier story unreadable in a demo.
+1. **Create the metric** (any "+ Create" menu → Metric). This project's is
+   named `Upgrade interest`, key `upgrade-interest`, Event key
+   `clicked-upgrade`, Custom event. The metric's own name and key are yours
+   to choose; the **event key must be exactly `clicked-upgrade`**, since
+   that's the string `/api/track-upgrade` sends. Measuring **occurrence**
+   (did the context click at all) rather than count is the better choice
+   for real traffic, since one account can press the button more than once.
+2. **Experiments → Create experiment.** Flag `show-plan-comparison`,
+   targeting rule **Rule 1** (`tier is one of free`), randomize by `user`,
+   **100%** of the rule's contexts in the experiment, `false` (no block) as
+   **control** and `true` as treatment, 50 / 50. Attach `upgrade-interest`
+   as the primary metric. This project uses frequentist with sequential
+   testing, significance 0.05, two-sided. Then **Start** it.
+   Run it on the free-tier rule, not the default rule: logged-out and
+   Enterprise visitors reach the default rule, and neither ever sees an
+   Upgrade button, so they could never convert.
+3. **Generate data:** `npm run simulate:experiment [count]` (default 4,000)
+   sends synthetic free-tier sessions against it, each evaluating the flag
+   once and clicking Upgrade at most once, more often when the block is
+   shown. See the script's header comment; this is clearly synthetic data,
+   not real usage. Results take several minutes to appear.
 
-If you want an experiment here that doesn't fight the tiers, vary the
-**upsell** instead of the entitlement: add a fourth variation identical to
-Free Tier but with `"lockedModels": []`, and run Free Tier (control) against
-it. Both arms then get the genuine free product, and the only difference is
-whether the account can see the models its plan excludes. Note that both
-arms carry `"label": "Free"`, so `scripts/simulate-experiment.ts` — which
-picks its conversion rate from that label — has to switch to
-`variationDetail()` and bucket on `detail.variationIndex` to tell them
-apart.
+Both arms get the genuine free product and the same Upgrade button; the only
+difference is whether the plan comparison is shown. While the experiment
+runs, the free-tier rule serves the experiment rather than `true`, so
+`demo-free` sees whichever arm it was bucketed into.
 
-The result the earlier run produced, and the decision drawn from it, are
-under "Experiment result and decision" in `docs/ARCHITECTURE.md`.
+An earlier experiment ran on `chat-tier-config`'s default rule (Free Tier vs
+Pro Tier). It produced a clear result but was stopped, because its treatment
+arm handed free accounts the Pro entitlement while still showing them
+"Upgrade to Pro". Its result, the reason it was stopped, and the readout of
+the current experiment are under "Experiment result and decision" in
+`docs/ARCHITECTURE.md`.
 
 ### 4. Create the AI Config
 
@@ -684,6 +691,61 @@ immediately, with no redeploy. To change the model the same way, log in as
 `demo-enterprise`, leave the model menu untouched, and switch the config's
 model to `Qwen3.8-27B-UD-Q3_K_XL`: the next reply's caption shows Qwen 3.8.
 Free and Pro keep the 4B, because their tier doesn't allow that model.
+
+#### Prompt experiment, scored by feedback and a judge (optional)
+
+Tests a second system prompt against the current one, on two kinds of
+evidence at once: what users say (👍 / 👎) and what an LLM judge says about
+the same replies. What each reply costs (output tokens) and how long it makes
+people wait (time to first token) are tracked per variation too, on the AI
+Config's Monitoring tab, though not as experiment metrics. Only the prompt
+changes between the arms; model and temperature stay the same, so any
+difference is the prompt's.
+
+1. **Create the judge.** Agents → Configs → Create config → **Judge** mode.
+   Name `Nimbus Judge — Helpfulness`, key `nimbus-judge-helpfulness`.
+   - **Model:** any; the form only lists hosted providers, and the app
+     ignores this field. Every judge runs on the assistant variation's own
+     model (`Qwen3.5-4B` here), and only on replies that model wrote: the
+     home lab keeps one model loaded at a time, and judging on another one
+     would unload the model the user is chatting with.
+   - Parameter **temperature** `0`, so the same reply gets the same score.
+   - **System** message, the rubric:
+     > You are grading one reply from a chat assistant. Score how helpful it
+     > is to the user who asked. 1 means it answers what was asked,
+     > correctly and clearly, at a sensible length. 0.5 means partly useful,
+     > padded, or missing something important. 0 means wrong, off-topic or
+     > evasive. Grade the reply, not the question.
+   - **Evaluation metric key:** whatever the dashboard creates or offers for
+     the judge. The app reads it from the config, so it needs no change here.
+   - Targeting: default rule serves this variation; toggle it **On**.
+2. **Add the treatment variation** to `nimbus-assistant`: key
+   `structured-concise` (the simulator looks for this key), same model and
+   temperature as the existing variation, system message:
+   > You are the Nimbus assistant. Answer the question in your first
+   > sentence. If more detail helps, add at most three short bullet points.
+   > Be accurate, and say plainly when you don't know. Ask a clarifying
+   > question only when the request is genuinely ambiguous.
+3. **Attach the judge to both variations,** with the same sampling rate on
+   each (this project uses **10%**). The judge configuration lives on each
+   variation, so attaching it to only one arm would leave the other arm
+   with no judge scores at all.
+4. **Experiments → Create experiment.** AI Config `nimbus-assistant`, the
+   default rule, randomize by `user`, 100% in the experiment, the existing
+   variation as **control**, 50 / 50. Metrics: **positive feedback** as the
+   primary metric (`$ld:ai:feedback:user:positive`); the judge's score
+   (`$ld:ai:judge:nimbus-judge-helpfulness`, numeric average) as a secondary
+   metric. Start it.
+5. **Generate data:** `npm run simulate:ai-experiment [count]` (default
+   4,000). It calls no model: each synthetic session records made-up
+   tokens, latency, feedback and a judge score on a real AI Config tracker,
+   through the same SDK calls the app makes. See the script's header.
+
+**Try it:** chat as any account. Each reply gets a **Helpful? 👍 👎** row.
+A click records feedback on the AI Config run that wrote that reply, even if
+the config has been edited since. With the judge attached, about one reply
+in ten is scored right after it finishes. The score shows up on the AI
+Config's **Monitoring** tab and in the experiment.
 
 ### 5. Run it
 

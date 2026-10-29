@@ -10,7 +10,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "simulate:experiment": "tsx scripts/simulate-experiment.ts"
+    "simulate:experiment": "tsx scripts/simulate-experiment.ts",
+    "simulate:ai-experiment": "tsx scripts/simulate-ai-experiment.ts"
   },
   "dependencies": {
     "@launchdarkly/node-server-sdk": "^9.14.1",

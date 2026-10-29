@@ -1,6 +1,7 @@
 import { init, type LDClient, type LDContext } from '@launchdarkly/node-server-sdk';
 import { initAi, type LDAIClient } from '@launchdarkly/server-sdk-ai';
 import type { Tier } from '@/lib/demo-users';
+import { ldLogger } from '@/lib/ld-logger';
 
 let clientPromise: Promise<LDClient> | undefined;
 let aiClient: LDAIClient | undefined;
@@ -28,7 +29,7 @@ function getSdkKey(): string {
  */
 export function getLDClient(): Promise<LDClient> {
   if (!clientPromise) {
-    const client = init(getSdkKey());
+    const client = init(getSdkKey(), { logger: ldLogger });
     clientPromise = client
       .waitForInitialization({ timeout: 10 })
       .then(() => client)
