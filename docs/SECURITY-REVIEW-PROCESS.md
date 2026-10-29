@@ -52,15 +52,14 @@ A review that doesn't say what it skipped reads as if it covered everything.
 - **Docs are public as well — but check *which* ones.** Only `README.md`,
   `docs/ARCHITECTURE.md` and this file are tracked; confirm with `git ls-files
   '*.md'` instead of trusting a listing of the working tree. Those three get the
-  hostname, real-email and topology pass. `DEMO-GUIDE.md`/`.html`, the Demo Quick
-  Guide HTML, `AGENTS.md`, `CLAUDE.md`, `LOCAL-NOTES.md` and
+  hostname, real-email and topology pass. `DEMO-GUIDE.md` (and any HTML
+  version of it), `AGENTS.md`, `CLAUDE.md`, `LOCAL-NOTES.md` and
   `nimbus-mark-prompt.txt` are held back by `.git/info/exclude`, not
   `.gitignore` — and that file is per-clone and never pushed, so it guards this
   working copy only: a fresh clone, another machine, or one `git add -f` has no
   such protection. Re-check it with `git status --short --ignored` each pass,
-  since a rename silently escapes its pattern. The demo guides are also handed
-  to people directly, so they still need the same pass even though git never
-  publishes them.
+  since a rename silently escapes its pattern. Local files shared outside git
+  still need the same pass, even though git never publishes them.
 
 ## Step 3 — write findings with evidence, not verdicts
 

@@ -38,32 +38,24 @@ share it with. Keep `.env.local` private; `.gitignore` only stops you from
 committing it by accident.
 
 **What to try:**
-- Log in as each account, open the model menu next to the chat's toggles,
-  and send a message. Each reply shows a "served by …" caption naming the
-  model and tier config used. Each account gets its own plan's menu: Free
-  the 4B alone, Pro that plus the long-context 4B, Enterprise all four.
-- With the "Memory" badge on, tell it "My name is Alex, remember that,"
-  then ask "what's my name?" — it should recall it across turns. Memory is
-  a paid feature, so use `demo-pro` or `demo-enterprise`; free accounts
-  answer every message as if it were the first.
-- As a free-tier account, the "Upgrade to Pro" button fires the conversion
-  metric behind the Experimentation setup — no real checkout happens.
-- The assistant's tone/personality and temperature come from a LaunchDarkly
-  AI Config (`nimbus-assistant`), fetched fresh on every message — editing
-  the prompt in the LD dashboard changes the very next reply, no redeploy.
-- The logo in the header is gated behind `new-logo` — flip it off in LD and
-  it reverts live to the plain text wordmark, no reload. A second example of
-  the release/remediate pattern, this time for a brand rollout instead of a
-  product feature.
-- The "Compare plans" block between the headline and the chat is released
-  behind `show-plan-comparison`, and each account sees it for a different
-  reason: `demo-pro` by individual target, `demo-free` by a `tier` rule, and
-  logged-out visitors through a 20% percentage rollout, each browser
-  bucketed on its own key.
+- **Plans and models:** log in as each account and open the model menu.
+  Free gets the 4B alone, Pro adds the long-context 4B, Enterprise all four;
+  each reply's caption names the model and plan that answered.
+- **Memory:** as `demo-pro` or `demo-enterprise`, tell it "My name is Alex,
+  remember that," then ask "what's my name?". `demo-free` has memory off.
+- **Live flags:** flip `new-logo` or `enable-conversation-memory` in the
+  dashboard and watch the header logo or the Memory badge change without a
+  reload.
+- **Targeting:** the "Compare plans" block reaches `demo-pro` by individual
+  target, `demo-free` by a `tier` rule, and 20% of logged-out visitors by
+  percentage rollout.
+- **AI Config:** the assistant's prompt and temperature come from
+  `nimbus-assistant`; edit the prompt and the next reply follows it.
+- **Experiments:** the free plan's "Upgrade to Pro" button and the 👍 / 👎
+  under each reply feed the two experiments described below.
 
-If something doesn't work, jump to "Re-creating this independently" below —
-the same steps explain what each flag is doing, which is useful even if you
-didn't set it up yourself.
+Each flag's section under "Re-creating this independently" explains what it
+does and how to try it, which helps even if you didn't set it up yourself.
 
 ## What's implemented
 
@@ -96,21 +88,12 @@ didn't set it up yourself.
   is sent to Open WebUI's image API instead of the chat model, and the
   picture is shown in the thread
 
-There are two deployments, on purpose:
-
-- **Self-hosted** (Docker, alongside the model backend) — the fully working
-  one. Chat, web search, and image generation all function, because the
-  inference call never leaves the host. See "Self-hosting with Docker" below.
-- **[nimbus-ai-sample.vercel.app](https://nimbus-ai-sample.vercel.app/)** —
-  the landing page, login, and live flag badges work, but **chat doesn't**:
-  Cloudflare challenges Vercel's requests to the backend before they arrive.
-  Kept as proof the app deploys cleanly to a standard platform. See
-  "Deploying to Vercel" below.
-
-Both point at the same LaunchDarkly environment, so a flag flipped in the
-dashboard changes both at once. Not yet built: third-party integrations. See
-`docs/ARCHITECTURE.md` for the full status and the reasoning behind what's
-here.
+There are two deployments: **self-hosted with Docker**, beside the model
+backend, where everything works, and
+**[nimbus-ai-sample.vercel.app](https://nimbus-ai-sample.vercel.app/)**,
+where everything except chat works (see "Deploying to Vercel"). Both read the
+same LaunchDarkly environment. Not built: third-party integrations. See
+`docs/ARCHITECTURE.md` for the full status and the reasoning behind it.
 
 ## Assumptions about your environment
 
@@ -164,124 +147,75 @@ for you, the note says what changes.
 
 This is the deployment where everything works. The app runs on the same host
 as Open WebUI and reaches it over the local Docker network, so the inference
-call never passes through Cloudflare — which is exactly what breaks the
-Vercel deployment (see below).
+call never passes through Cloudflare, which is what blocks chat on Vercel
+(below).
 
 ```bash
 docker compose --env-file .env.local up -d --build
 ```
 
-The `--env-file` is not optional. Compose substitutes `${...}` in the compose
-file from the shell or a `.env` file — *not* from the `env_file:` key, which
-only sets runtime variables inside the container. Without it the LaunchDarkly
-client ID resolves to an empty string and gets baked into the browser bundle
-that way (see gotcha 2 below). The compose file guards against this with a
-`:?` default so it fails with an explanatory error instead of building a
-quietly broken image.
+The `--env-file` is required: Compose fills in `${...}` in the compose file
+from the shell or a `.env` file, not from the `env_file:` key. Without it the
+LaunchDarkly client ID is empty at build time (gotcha 2 below), and the
+compose file's `:?` guard stops the build with an error.
 
 `docker-compose.yml` reads secrets from `.env.local` and overrides three
-values for this environment: `LOCAL_AI_BASE_URL` points at Open WebUI's
-internal address, the two `CF_ACCESS_*` variables are blanked (no Cloudflare
-hop means no service token), and `AUTH_TRUST_HOST=true` is set. Check the
-`networks:` block at the bottom matches the network Open WebUI actually runs
-on — `docker network ls` will tell you.
+values: `LOCAL_AI_BASE_URL` points at Open WebUI's internal address, the two
+`CF_ACCESS_*` variables are blank (no Cloudflare hop), and
+`AUTH_TRUST_HOST=true` is set. Check that the `networks:` block matches the
+network Open WebUI runs on (`docker network ls`).
 
-The container publishes on `127.0.0.1:3200` — loopback only, so it's reachable
-from outside solely through the tunnel. Point a hostname at it: a
-`proj-nimbus.<domain>` public hostname on an existing Cloudflare Tunnel, service
-type **HTTP**, URL `127.0.0.1:3200`. Plain HTTP is correct — `cloudflared` runs
-on the same host and TLS terminates at Cloudflare's edge. Use the literal IP
-rather than `localhost`: the container binds IPv4 loopback only, so on a host
-where `localhost` also resolves to `::1`, the dialer can try IPv6 first and
-fail.
+The container publishes on `127.0.0.1:3200`, loopback only, so it is
+reachable from outside only through a tunnel. Point a Cloudflare Tunnel
+public hostname at it with service type **HTTP** and URL `127.0.0.1:3200`;
+TLS terminates at Cloudflare. Use the IP rather than `localhost`, since the
+container binds IPv4 only and `localhost` may resolve to `::1` first.
 
-Three things that will bite you if you deploy this by hand instead:
+Three things that break a hand-rolled deployment:
 
-1. **`AUTH_TRUST_HOST=true` is required.** Auth.js v5 only trusts the request
-   host automatically on Vercel. Behind a tunnel or reverse proxy without
-   this, logins fail at the callback with a confusing host error.
-2. **`NEXT_PUBLIC_LAUNCHDARKLY_CLIENT_ID` must be set at *build* time**, not
-   run time — `NEXT_PUBLIC_*` values are inlined into the browser bundle by
-   `next build`. The Dockerfile takes it as a build arg for this reason. Pass
-   it only at `docker run` and the client SDK is silently disabled: no error,
-   no warning in production, just a Memory badge and logo swap that never
-   respond to flag changes while server-side flags keep working fine.
+1. **`AUTH_TRUST_HOST=true` is required** behind a tunnel or reverse proxy.
+   Auth.js v5 only trusts the request host automatically on Vercel; without
+   it, logins fail at the callback.
+2. **`NEXT_PUBLIC_LAUNCHDARKLY_CLIENT_ID` must be set at build time.**
+   `next build` inlines it into the browser bundle, so the Dockerfile takes
+   it as a build arg. Passed only at `docker run`, the client SDK is disabled
+   with no error in production: the Memory badge and logo never respond to
+   flag changes, while server-side flags keep working.
 3. **The host needs outbound HTTPS to `*.launchdarkly.com`** for the server
-   SDK's flag stream and event flush. The browser's client SDK connects to
-   LaunchDarkly directly from each visitor's machine, so that path doesn't
-   touch your infrastructure.
+   SDK's flag stream and events. The browser's client SDK connects to
+   LaunchDarkly directly from each visitor's machine.
 
-Once this is publicly reachable, the app's own login is what stands between
-the internet and the GPU: `/api/chat` checks the session and returns `401`
-regardless of what the UI shows. Make `DEMO_PASSWORD` a long random value
-that isn't reused anywhere else.
-
-This deployment also has a Cloudflare Access application on its hostname,
-configured as a regional Bypass policy: traffic from the permitted country
-reaches the app directly, anything else is refused at the edge. The landing
-page is public by design; the chat is not.
-
-If you instead give Access a policy that *requires* authentication, know that
-it intercepts every path, `/api/chat` included — so an expired Access session
-returns its HTML login page where the browser expects JSON, and the UI reports
-the generic "chat backend is unreachable" error. A login lapse that looks
-exactly like an outage. Use a generous session duration if you go that route.
+Once the hostname is public, the app's own login is what protects the
+model backend: `/api/chat` checks the session and returns `401` whatever the
+UI shows. Use a long, unique `DEMO_PASSWORD`. If you put a Cloudflare Access
+policy in front of the hostname, see "Deployments" in `docs/ARCHITECTURE.md`
+for which kind of policy works with the chat API.
 
 ## Deploying to Vercel
 
 This project's own instance is live at
 [nimbus-ai-sample.vercel.app](https://nimbus-ai-sample.vercel.app/), but
-**chat doesn't work there** — see step 5. It's kept as evidence the app
-deploys cleanly to a standard platform, and the flag-driven parts of the UI
-(logo swap, live Memory badge, login) do work there. For a working chat demo,
-self-host it instead (above). The steps below are what it took to get here,
-if you're setting up your own.
+**chat doesn't work there**: Cloudflare challenges Vercel's requests to the
+model backend (step 4). The landing page, login and live flag-driven UI do
+work. The app is a standard Next.js project, so no build changes are needed.
 
-The app is a standard Next.js project — no build changes are needed to put
-it on Vercel. What matters is getting the environment right, since nothing
-above is read from `.env.local` once it's off this machine.
-
-1. **Import the repo** in the Vercel dashboard (or `vercel link` from this
-   directory), framework preset **Next.js**.
+1. **Import the repo** in the Vercel dashboard (or `vercel link`), framework
+   preset **Next.js**.
 2. **Add every variable from `.env.example`** under Project Settings →
-   Environment Variables (Production, and Preview if you want preview
-   deployments to work too):
-   `LAUNCHDARKLY_SDK_KEY`, `NEXT_PUBLIC_LAUNCHDARKLY_CLIENT_ID`,
-   `AUTH_SECRET`, `DEMO_PASSWORD`, `INFERENCE_PROVIDER`, `GROQ_API_KEY`,
-   `LOCAL_AI_BASE_URL`, `LOCAL_AI_API_KEY`, `CF_ACCESS_CLIENT_ID`,
-   `CF_ACCESS_CLIENT_SECRET`. There's nothing Vercel-specific to add —
-   NextAuth (Auth.js) v5 trusts the host automatically when it detects
-   Vercel's own `VERCEL` environment variable, so no `NEXTAUTH_URL` is
-   needed.
-3. **Deploy.** The home-lab backend behind `LOCAL_AI_BASE_URL` is reached
-   over its public Cloudflare Tunnel hostname with a Service Auth token, the
-   same way it's reached from a local dev server — in principle, Vercel's
-   functions are just another caller on the public internet. In practice,
-   see step 5.
-4. **If you're on the Hobby (free) plan**, function duration is capped at
-   60 seconds. `app/api/chat/route.ts` already sets `maxDuration = 60` for
-   this reason, and `generateImage()` in `lib/inference.ts` times out at 55s
-   so a slow upstream fails with a clean error instead of Vercel killing the
-   function mid-request. Image generation took ~50s in local testing, so
-   there's little headroom — an occasional timeout on a slow prompt is
-   expected on Hobby. Raise `maxDuration` (Pro supports up to 300s) if that
-   turns out to be too flaky.
-5. **Chat is currently blocked on the deployed instance.** Every chat request
-   from Vercel gets a `403` back from Cloudflare — the body is Cloudflare's
-   "Just a moment..." interstitial, meaning Bot Fight Mode (or Super Bot
-   Fight Mode) is challenging the request at the edge before it reaches the
-   Access Service Auth policy or Open WebUI. Identical requests from local
-   dev succeed with the same credentials, so this is specifically about how
-   Cloudflare treats traffic from Vercel's network. The real fix is a
-   Cloudflare Configuration Rule scoped to the `LOCAL_AI_BASE_URL` hostname
-   that skips Bot Fight Mode for just that hostname — but Configuration
-   Rules (and Custom Rules) are gated behind a paid Cloudflare plan on this
-   zone. The only free-tier lever is the zone-wide Bot Fight Mode toggle,
-   which would also drop bot protection from the main Open WebUI hostname —
-   not worth that trade-off for a demo deployment. **Self-host it (above) for
-   a working chat demo** — running alongside Open WebUI sidesteps this
-   entirely, since the inference call stops being internet traffic. See
-   "Known gaps" in `docs/ARCHITECTURE.md` for the full writeup.
+   Environment Variables. Nothing Vercel-specific is needed: Auth.js trusts
+   the host automatically on Vercel, so no `AUTH_TRUST_HOST` or
+   `NEXTAUTH_URL`.
+3. **On the Hobby plan**, functions are capped at 60 seconds.
+   `app/api/chat/route.ts` sets `maxDuration = 60`, and `generateImage()` in
+   `lib/inference.ts` times out at 55 s so a slow image fails with a clear
+   error. Image generation takes about 50 s, so an occasional timeout is
+   expected; Pro allows up to 300 s.
+4. **Chat is blocked on the deployed instance.** Requests from Vercel to the
+   backend's public hostname get Cloudflare's bot challenge (`403`, "Just a
+   moment...") before they reach the backend, while identical requests from
+   elsewhere succeed. Skipping the challenge for one hostname needs a paid
+   Cloudflare plan. The full write-up is under "Deployments" in
+   `docs/ARCHITECTURE.md`; self-host the app for a working chat.
 
 ## Re-creating this independently
 
@@ -291,19 +225,18 @@ already worked for you.
 
 ### What you'll need
 
-- **Node.js 20 or newer** (built against Node 22; Node 18 will fail to
-  install some dependencies).
-- **A LaunchDarkly account** — the free trial is enough. One project with
-  at least one environment.
-- **A chat model backend.** The app talks to any OpenAI-compatible chat
-  completions API:
-  - **Groq** (recommended for just trying this out) — free account at
-    [console.groq.com](https://console.groq.com), create an API key. No
-    infrastructure of your own required.
-  - **Your own self-hosted OpenAI-compatible server** (Ollama, llama.cpp,
-    Open WebUI, vLLM, etc.) — if it's on a private network, the app can
-    optionally send Cloudflare Access service-token headers alongside the
-    request; if it's open or local, just leave those two variables blank.
+- **Node.js 20 or newer**, a **LaunchDarkly account** (the free trial is
+  enough), and a **chat model backend** that speaks the OpenAI chat
+  completions API. See "Assumptions about your environment" above for what
+  each choice implies.
+- **Backend options:**
+  - **Your own OpenAI-compatible server** (Open WebUI, llama.cpp, Ollama,
+    vLLM, etc.). This is the tested path. If it sits behind Cloudflare
+    Access, the app can send service-token headers; otherwise leave those
+    variables blank.
+  - **Groq**, if you have no infrastructure: create an API key at
+    [console.groq.com](https://console.groq.com). Its code path is
+    implemented but has not been run end to end.
 
 ### 1. Clone and install
 
@@ -323,7 +256,7 @@ Open `.env.local` and fill in:
 
 | Variable | Where it comes from |
 |---|---|
-| `LAUNCHDARKLY_SDK_KEY` | Your LD project's environment → **Account settings → Projects → (your environment) → SDK key**. Server-side, keep it secret. |
+| `LAUNCHDARKLY_SDK_KEY` | **Project settings → Environments → (your environment) → SDK key**. Server-side, keep it secret. |
 | `NEXT_PUBLIC_LAUNCHDARKLY_CLIENT_ID` | Same page → **Client-side ID**. Safe to expose in the browser. Note it's read at *build* time, not run time — see "Self-hosting with Docker". |
 | `AUTH_SECRET` | Any random string. Generate one with `openssl rand -base64 32`. |
 | `AUTH_TRUST_HOST` | Set to `true` only when serving from a custom domain behind a proxy/tunnel. Not needed for local dev or Vercel. |
@@ -356,21 +289,17 @@ to confirm your SDK key/client ID work before moving on.
 #### `enable-conversation-memory` — boolean
 
 Controls whether the chat remembers earlier turns in the same conversation,
-or treats every message as a fresh start. It is also plan-gated: memory is
-a paid feature, so free accounts are served `false`.
+or treats every message as a fresh start.
 
 1. **Create flag** → Name: `Conversation Memory`, Key: `enable-conversation-memory`
    (the key must match exactly), Type: **Boolean**.
 2. Make sure **"Available on client-side SDKs"** is turned on — the landing
    page's live status badge needs it.
 3. Set the default rule to serve `true`, and toggle the flag **On**.
-4. **Exclude the free plan:** add a custom rule — if `tier` is one of
-   `free` → serve `false`. Memory is what `chat-tier-config`'s
-   `maxContextMessages` caps, so a tier without memory is stateless and that
-   cap never applies to it (see the note under `chat-tier-config`). This
-   project's own environment currently does it with an individual target on
-   `demo-free` rather than a rule; a rule is what makes it a plan boundary
-   rather than one account's setting.
+4. **Turn it off for `demo-free`:** add an individual target, context key
+   `demo-free` → serve `false`. To make memory a paid feature for every
+   free account instead, use a rule: if `tier` is one of `free` → serve
+   `false`.
 5. **Add a remediation trigger:** open the flag, click the environment
    pill (e.g. "Test") near the top of the Targeting tab, choose
    **Flag actions → Configuration in environment**, find **Triggers**, and
@@ -378,10 +307,10 @@ a paid feature, so free accounts are served `false`.
    off**. Save the generated URL somewhere private — LaunchDarkly only shows
    it once.
 
-**Try it:** log in as `demo-pro` or `demo-enterprise` (free has no memory by
-design, so it can't show this). With the flag on, tell the chat "My name is
+**Try it:** log in as `demo-pro` or `demo-enterprise` (`demo-free` has
+memory off). With the flag on, tell the chat "My name is
 Alex, remember that," then ask "what's my name?" — it should recall it. `curl -X POST
-<your trigger URL>` and ask again in the same browser tab (no reload) — the
+<your trigger URL>` and ask again in the same browser tab (no reload): the
 "Memory" badge flips to Off live, and the assistant immediately forgets.
 
 #### `new-logo` — boolean
@@ -440,9 +369,8 @@ Tavily integration) and add the results to the model's context.
 It is a pure kill switch, not an entitlement: no rules, no targets, on for
 every account. Turning it **Off** removes the toggle from all of them at
 once, and the server stops honouring search requests even from pages still
-showing the button. In a live product you'd add a `tier` rule to make it a
-paid feature; here it stays deliberately ungated, so it demonstrates the
-kill switch on its own.
+showing the button. A `tier` rule would make it a paid feature; it is left
+ungated here so it shows the kill switch on its own.
 
 1. **Create flag** → Name: `Enable Web Search`, Key: `enable-web-search`,
    Type: **Boolean**.
@@ -465,8 +393,8 @@ from a stale page, since it re-checks the flag on every message.
 
 Offers a "Generate an image" toggle in the chat. When it's on, that turn's
 prompt is sent to Open WebUI's image API (`POST /api/v1/images/generations`)
-instead of the chat model. Open WebUI paints it with the local ComfyUI
-setup and Nimbus shows the picture in the thread. On for everyone except the
+instead of the chat model. Open WebUI generates it with ComfyUI, and Nimbus
+shows the picture in the thread. On for everyone except the
 `demo-free` account, which is individually gated off — it is the most widely
 shared login, and image generation is the most expensive thing the single GPU
 can be asked to do.
@@ -476,22 +404,22 @@ can be asked to do.
 2. Turn on **"Available on client-side SDKs"** — the toggle's visibility
    reads it live.
 3. Set the default rule to serve `true`, and toggle the flag **On**.
-4. **Gate the shared demo account:** add an **individual target** — context
-   key `demo-free` → serve `false`. This is deliberately per-account, not a
-   `tier` rule: the point is to keep the GPU's most expensive operation away
-   from the login that gets passed around, not to make image generation a
-   plan feature.
+4. **Gate the shared demo account:** add an **individual target**, context
+   key `demo-free` → serve `false`. It is per-account rather than a `tier`
+   rule: it keeps the GPU's most expensive operation away from the most
+   widely shared login, without making image generation a plan feature.
 
 Requires `INFERENCE_PROVIDER=local` and image generation configured in Open
 WebUI (Admin → Settings → Images, engine ComfyUI). On Groq the toggle does
 nothing. If both this toggle and web search are on, the image request wins
-for that turn. If API key endpoint restrictions are on, the key also has to
-be allowed to call `/api/v1/images/generations` and `/api/v1/files` — chat
-completions alone cannot return the picture.
+for that turn. If API key endpoint restrictions are on in Open WebUI, the
+key's allowlist needs `/api/chat/completions`, `/api/v1/models`,
+`/api/v1/images/generations` and `/api/v1/files`: the last two request the
+picture and download the stored file.
 
 **Try it:** turn the toggle on and describe a picture. The reply shows the
-image with a "generated locally" caption. The first one can take a while —
-the home lab starts the painter and unloads the chat model for that job.
+image with a "generated locally" caption. The first one can take a while,
+since a single-GPU backend unloads the chat model to generate it.
 Flip the flag **Off** and the toggle disappears without a reload.
 
 #### `chat-tier-config` — JSON
@@ -558,8 +486,7 @@ history it gets, and how many messages it may send in one conversation.
    }
    ```
 
-   The older single-model shape (`{ "model": "…", "maxContextMessages": 4,
-   "label": "Free" }`) is still accepted, as a one-entry menu.
+   `requiredTier` is the plan name shown beside a locked model.
 3. On the **Targeting** tab, add two custom rules (order between them
    doesn't matter, since `tier` only ever holds one value):
    - If `tier` is one of `pro` → serve **Pro Tier**
@@ -568,51 +495,30 @@ history it gets, and how many messages it may send in one conversation.
    with any other (or no) tier attribute fall through to.
 5. Toggle the flag **On**.
 
+Each account now matches its own plan
+
 Each account now matches its own plan, which is what makes the model menu
-read correctly. Earlier revisions also kept a standing **individual target**
-(`demo-pro` → Free Tier) to show that individual targets beat rules; that was
-retired because a Pro account served the Free config contradicted every other
-part of the demo. The precedence is better shown live — add the target in
-front of an audience and the open tab's model menu collapses with no reload,
-then delete it again.
+read correctly. Individual targets are evaluated before these rules, so
+adding one (for example `demo-pro` → Free Tier) in front of an audience
+collapses an open tab's model menu with no reload.
 
-**Two different limits, often confused.** `maxContextMessages` is a sliding
-window over what gets replayed to the model, and it only takes effect when
-`enable-conversation-memory` is on for the account — it never refuses a
-message, it just forgets older ones. Free is excluded from memory above, so
-the free tier is stateless and its `4` is never reached; it is kept as the
-value that would apply if memory ever reached free.
-
-`maxMessagesPerConversation` is the hard stop. Omit it and the plan is
-unlimited, which is what Pro and Enterprise do. Set it, and `/api/chat`
-refuses with **403** once the conversation has used its allowance, and the
-browser replaces the composer with the plan's wall and the upgrade button
-before that happens. It does not depend on memory. Two things follow from
-the app having no database:
-
-- **It is per conversation, not per account.** The count comes from the
-  history the browser submits, so reloading starts a fresh allowance. That is
-  a real product shape ("4 messages per conversation on the free plan"), not
-  an account quota — a per-account limit needs storage this project
-  deliberately doesn't have.
-- **It fails open.** `DEFAULT_TIER_CONFIG` sets no limit, so if LaunchDarkly
-  is unreachable nobody is turned away because a flag couldn't be read.
-
-The app ships inert until a variation carries the field: no
-`maxMessagesPerConversation` anywhere means no behavior change at all.
-
-If you change these variations on a deployment that's still running an
-older build of this app, keep a `"model"` field in each one (the tier's
-single model, as before) until the new build is live — older builds read
-only that field, and newer ones ignore it.
+**Two limits.** `maxContextMessages` is how much history is replayed to the
+model, and only applies when `enable-conversation-memory` is on for the
+account. `maxMessagesPerConversation` is a hard message allowance: omit it
+for unlimited (Pro and Enterprise), and set it on Free to show the limit
+notice and its Upgrade button. `/api/chat` refuses with **403** once the
+allowance is used. It is per conversation, because the app has no
+database, and it fails open when LaunchDarkly is unreachable. Both are
+explained under "Two limits that are easy to confuse" in
+`docs/ARCHITECTURE.md`.
 
 **Try it:** log in as each demo account (`demo-free`, `demo-pro`,
-`demo-enterprise` — see `lib/demo-users.ts`) and open the model menu next
+`demo-enterprise`, see `lib/demo-users.ts`) and open the model menu next
 to the chat's toggles. Free has one model and three greyed out, Pro can
 switch between the two 4B models, and Enterprise can pick all four. Each
-reply's "served by …" caption names the model and tier config that
-answered. Switching to a different model makes the first reply
-slow on a single-GPU home lab, which keeps one model loaded at a time.
+reply's caption names the model and plan that answered. The first reply
+after switching models is slower, because a single-GPU backend loads one
+model at a time.
 
 #### Experiment + metric (optional)
 
@@ -652,18 +558,13 @@ runs, the free-tier rule serves the experiment rather than `true`, so
 shipped on the free-tier rule. To do the same, stop the iteration and choose
 `true` as the variation to serve.
 
-An earlier experiment ran on `chat-tier-config`'s default rule (Free Tier vs
-Pro Tier). It produced a clear result but was stopped, because its treatment
-arm handed free accounts the Pro entitlement while still showing them
-"Upgrade to Pro". Its result, the reason it was stopped, and the readout of
-the current experiment are under "Experiment result and decision" in
+The full readout, and an earlier experiment on `chat-tier-config`, are in
 `docs/ARCHITECTURE.md`.
 
 ### 4. Create the AI Config
 
-This is a separate LaunchDarkly product (branded **AgentControl** in the
-dashboard, under **Agents** in the left sidebar) from the flags above — it's
-not under Features. It controls the assistant's prompt and temperature for
+AI Configs are a separate part of LaunchDarkly from the flags above, under
+**Agents → Configs** in the left sidebar. It controls the assistant's prompt and temperature for
 every account, and its model is the default selection in the model menu —
 but only for tiers whose `chat-tier-config` allows that model. A user's own
 pick from the menu wins.
@@ -691,8 +592,9 @@ pick from the menu wins.
 **Try it:** ask the assistant something generic like "tell me about your
 day." Then go back and edit the system message to something distinctive
 (e.g. "You are a pirate. Speak only in pirate slang.") and save. Ask again,
-same conversation — the very next reply should reflect the new prompt
-immediately, with no redeploy. To change the model the same way, log in as
+same conversation: the next reply follows the new prompt, with no
+redeploy. While an experiment runs on the config its variations are
+locked, so stop the experiment first to try this. To change the model the same way, log in as
 `demo-enterprise`, leave the model menu untouched, and switch the config's
 model to `Qwen3.8-27B-UD-Q3_K_XL`: the next reply's caption shows Qwen 3.8.
 Free and Pro keep the 4B, because their tier doesn't allow that model.
@@ -711,8 +613,8 @@ difference is the prompt's.
    Name `Nimbus Judge — Helpfulness`, key `nimbus-judge-helpfulness`.
    - **Model:** any; the form only lists hosted providers, and the app
      ignores this field. Every judge runs on the assistant variation's own
-     model (`Qwen3.5-4B` here), and only on replies that model wrote: the
-     home lab keeps one model loaded at a time, and judging on another one
+     model (`Qwen3.5-4B` here), and only on replies that model wrote: a
+     single-GPU backend loads one model at a time, and judging on another
      would unload the model the user is chatting with.
    - Parameter **temperature** `0`, so the same reply gets the same score.
    - **System** message, the rubric:
@@ -760,8 +662,8 @@ mistakes fixed along the way, are in `docs/ARCHITECTURE.md`.
 **Try it:** chat as any account. Each reply gets a **Helpful? 👍 👎** row.
 A click records feedback on the AI Config run that wrote that reply, even if
 the config has been edited since. With the judge attached, about one reply
-in ten is scored right after it finishes. The score shows up on the AI
-Config's **Monitoring** tab and in the experiment.
+in ten is scored right after it finishes. Scores appear in the experiment's
+judge metric.
 
 ### 5. Run it
 
