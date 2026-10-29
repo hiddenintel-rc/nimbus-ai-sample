@@ -41,9 +41,9 @@ Three design constraints have shaped every decision below:
 |---|---|---|
 | Release & remediate (toggle a feature live, roll it back via a trigger) | ✅ Done, tested | `enable-conversation-memory` |
 | Targeting (individual target, `tier` rule and percentage rollout on one component) | ✅ Built — the landing page's "Compare plans" block reaches `demo-pro` by individual target, free accounts by rule, and a share of logged-out visitors by rollout. `chat-tier-config` resolves each account to its own plan by rule, and two flags additionally gate the shared `demo-free` login | `show-plan-comparison`, `chat-tier-config`, `enable-conversation-memory`, `enable-image-generation` |
-| Experimentation (metric + experiment on the targeting flag) | ⏳ Running since 2026-10-29 on `show-plan-comparison`'s free-tier rule (Compare plans shown vs not); synthetic traffic sent, readout pending. The earlier `chat-tier-config` experiment's result and decision are recorded below | `show-plan-comparison` + `upgrade-interest` metric (`clicked-upgrade` event) |
+| Experimentation (metric + experiment on the targeting flag) | ✅ Concluded 2026-10-29 on `show-plan-comparison`'s free-tier rule: showing Compare plans raised upgrade interest by +72.48% (95% CI +30.41% to +114.54%) on synthetic traffic; `true` shipped. The earlier `chat-tier-config` experiment's result and decision are recorded below too | `show-plan-comparison` + `upgrade-interest` metric (`clicked-upgrade` event) |
 | AI Configs (managed prompt, parameters and default model) | ✅ Done, tested | `nimbus-assistant` (AgentControl config, separate from the flags above) |
-| AI Config experiment (prompt variants; 👍 / 👎, LLM judge, token and latency on Monitoring) | ⏳ Running since 2026-10-29 on `nimbus-assistant`'s default rule (current prompt vs `structured-concise`, 50/50): per-reply feedback through signed resumption tokens, and a judge at 10% on both arms. Synthetic traffic sent, readout pending | `nimbus-assistant` + `nimbus-judge-helpfulness` (judge mode) |
+| AI Config experiment (prompt variants; 👍 / 👎, LLM judge, token and latency on Monitoring) | ⏳ Running (Iteration 3) on `nimbus-assistant`'s default rule, current prompt vs `structured-concise`, 50/50; per-reply feedback through signed resumption tokens, a judge at 10% on both arms. On synthetic traffic the judge reads +11.76% (significant) and the primary, 👍 count, +10.31% (not yet significant): not shipped, kept running. Readout below | `nimbus-assistant` + `nimbus-judge-helpfulness` (judge mode) |
 | Model menu per tier (selectable + greyed-out upsell models) | ✅ Done, tested live for each tier, including refused requests for locked models | `chat-tier-config` + `nimbus-assistant` default |
 | Web search (Open WebUI + Tavily), all tiers | ✅ Done, tested | `enable-web-search` |
 | Image generation | ✅ Done. Prompt routes to Open WebUI's image API; a live call returned a PNG in about 50s. On for every account except `demo-free`, individually gated off to keep the GPU's most expensive operation away from the most widely shared login | `enable-image-generation` |
@@ -610,8 +610,8 @@ on, but no rule uses it. It is kept as a ready-made extension — a loyalty
 rule such as `accountAgeDays` ≥ 365 → Pro Tier, which would promote
 `demo-pro` (420 days) and `demo-enterprise` (1,100) but not `demo-free` (12).
 
-**Experiment, now:** `Compare Plans - Upgrade` has run on
-`show-plan-comparison`'s free-tier rule (Rule 1) since 2026-10-29. Control
+**Experiment, now:** `Compare Plans - Upgrade` ran on
+`show-plan-comparison`'s free-tier rule (Rule 1) on 2026-10-29. Control
 is `false` (no block), treatment `true`, 50 / 50, with 100% of free contexts
 in the experiment; primary metric `upgrade-interest`; frequentist with
 sequential testing, significance 0.05, two-sided. It is the upsell-varying
@@ -620,10 +620,36 @@ targeting and experiment share one flag as intended. Both arms get the
 genuine free product and the Upgrade button, and differ only in whether
 they see the plan comparison. It runs on the rule rather than the default
 rule because the default rule's audience (logged-out and Enterprise
-visitors) never sees an Upgrade button. While it runs, `demo-free` is
-bucketed into control and does not see the block. 4,000 synthetic
+visitors) never sees an Upgrade button. While it ran, `demo-free` was
+bucketed into control and did not see the block. 4,000 synthetic
 free-tier sessions were sent on 2026-10-29 (`npm run simulate:experiment`,
-4% vs 7% click rates); the readout is pending.
+4% vs 7% click rates).
+
+**Experiment result and decision (`Compare Plans - Upgrade`, Iteration 1,
+2026-10-29).** Hypothesis: if free users see the plan comparison, more of
+them click Upgrade, because they can see what Pro adds.
+
+| | `false`, no block (control) | `true`, block shown |
+|---|---|---|
+| Exposures | ~2,000 (50%) | ~2,000 (50%) |
+| Relative difference in `upgrade-interest` | — | **+72.48%** |
+| 95% confidence interval | — | +30.41% to +114.54% |
+
+4,001 contexts over about 12 hours (the 4,000 synthetic sessions plus
+`demo-free`). The interval is entirely above zero, so showing the block is
+significantly better in the desired direction, and LaunchDarkly's own
+takeaway says the same. The simulator was built with a 4% vs 7% click rate
+(+75%), which falls inside the interval, so the readout matches what went
+in. Sequential testing is what makes it sound to read the result as soon
+as it is significant rather than at a fixed sample size.
+
+**Decision:** ship `true` on the free-tier rule. The iteration is stopped
+with `true` as the winning variation, so every free account sees Compare
+plans again, `demo-free` included. As with the earlier experiment, the data
+is synthetic: this shows how the decision would be made, and with real
+traffic the same readout would be the trigger to ship. Next step for real
+traffic: switch `upgrade-interest` to measure occurrence rather than count
+(below).
 
 **Experiment, earlier:** `Upgrade Click` ran on `chat-tier-config`'s
 Default rule — Free Tier (control) vs. Pro Tier, 50/50, among contexts that
@@ -761,6 +787,54 @@ model: it records made-up tokens, latency, feedback and judge scores on real
 trackers, through the same SDK calls the app makes, and is documented as
 synthetic. Real chats on the self-hosted deployment, real ratings included,
 feed the same experiment.
+
+**Experiment readout (`nimbus-assistant-judge`, Iteration 3, 2026-10-29).**
+Frequentist with sequential testing, significance 0.05, two-sided; 4,000
+synthetic users, 50 / 50.
+
+| Metric | `structured-concise` vs control | 95% CI | Verdict |
+|---|---|---|---|
+| Positive feedback count (primary) | +10.31% | −2.36% to +22.97% | Not significant |
+| Judge helpfulness (secondary) | **+11.76%** | +7.44% to +16.09% | Significant |
+
+The judge readout matches what went in (mean score 0.74 vs 0.66, +12%). The
+primary is under-powered rather than wrong. It counts 👍 per exposed user,
+so it moves with how many people rate at all as well as with how they rate:
+in this iteration the treatment arm drew fewer raters (687 vs 715), and
+👍 per user came out 0.237 vs 0.214, +10.8%, against a built-in effect of
++16.7% (35% rate, 70% vs 60% positive). Iteration 2, on the same synthetic
+process, read +19.64% (CI +8.03% to +33.26%). Both intervals contain the
+true effect; at 2,000 users per arm, sampling noise alone decides whether
+this one clears zero.
+
+**Decision: don't ship yet; keep the iteration running.** The experiment
+was designed to be decided on the primary metric, and that metric is
+positive but inconclusive. Shipping on a significant secondary while the
+primary straddles zero would be choosing the metric after seeing the data.
+Everything points the same way, so the next step is more data, not a
+different conclusion: sequential testing allows adding users to the running
+iteration and reading the result again without inflating the error rate.
+Ship `structured-concise` (serve it on the default rule) if the primary
+clears zero; if it settles near zero instead, the judge's gain is not one
+users notice, and the shorter prompt's case rests on cost alone. For real
+traffic, positive *share* of rated replies (the Monitoring tab's
+satisfaction rating) would be a sharper primary than 👍 per exposed user,
+because it removes the noise of who chooses to rate.
+
+How it got here, since each fix is a lesson about the platform:
+
+- **Iteration 1** was stopped before any data: the judge appeared attached
+  to `structured-concise` in the editor, but the save had never gone
+  through, so that arm was served without a judge configuration. AI Config
+  variations are locked while an experiment runs, and the editor keeps
+  showing the unsaved edit. Checked by reading the delivered variation
+  through the SDK rather than trusting the dashboard.
+- **Iteration 2** read +19.64% on feedback but +0.32% (CI −19.73% to
+  +20.37%) on the judge. The judge metric was counting every exposed user,
+  with a 0 for the ~90% never judged, so both arms averaged about 0.064 and
+  it measured how often the judge ran, not how well replies scored. Fixed by
+  excluding units that send no event.
+- **Iteration 3** is the readout above.
 
 ## Known gaps (intentional, not forgotten)
 

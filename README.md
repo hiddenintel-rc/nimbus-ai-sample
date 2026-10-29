@@ -647,6 +647,11 @@ difference is whether the plan comparison is shown. While the experiment
 runs, the free-tier rule serves the experiment rather than `true`, so
 `demo-free` sees whichever arm it was bucketed into.
 
+**Result, on synthetic data:** showing the block raised upgrade interest by
+**+72.48%** (95% CI +30.41% to +114.54%, 4,001 contexts), so `true` was
+shipped on the free-tier rule. To do the same, stop the iteration and choose
+`true` as the variation to serve.
+
 An earlier experiment ran on `chat-tier-config`'s default rule (Free Tier vs
 Pro Tier). It produced a clear result but was stopped, because its treatment
 arm handed free accounts the Pro entitlement while still showing them
@@ -736,10 +741,21 @@ difference is the prompt's.
    primary metric (`$ld:ai:feedback:user:positive`); the judge's score
    (`$ld:ai:judge:nimbus-judge-helpfulness`, numeric average) as a secondary
    metric. Start it.
+   On the judge metric, set units that send no event to **excluded**, not
+   "included with a value of 0". Only the sampled share of replies is
+   judged, so counting everyone else as 0 measures how often the judge ran
+   rather than how well replies scored, and hides any real difference.
 5. **Generate data:** `npm run simulate:ai-experiment [count]` (default
    4,000). It calls no model: each synthetic session records made-up
    tokens, latency, feedback and a judge score on a real AI Config tracker,
    through the same SDK calls the app makes. See the script's header.
+
+**Result so far, on synthetic data:** the judge scores `structured-concise`
+**+11.76%** more helpful (95% CI +7.44% to +16.09%, significant), and
+positive feedback, the primary metric, reads +10.31% (CI −2.36% to +22.97%,
+not yet significant). It isn't shipped: the primary decides, so the
+experiment keeps running. The full readout, and the two configuration
+mistakes fixed along the way, are in `docs/ARCHITECTURE.md`.
 
 **Try it:** chat as any account. Each reply gets a **Helpful? 👍 👎** row.
 A click records feedback on the AI Config run that wrote that reply, even if
