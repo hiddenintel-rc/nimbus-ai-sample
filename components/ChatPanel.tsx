@@ -19,6 +19,7 @@ type StreamEvent =
   | { type: 'meta'; servedBy: ServedBy; webSearch: boolean; maxTokens?: number }
   | { type: 'delta'; text: string; completionTokens: number; promptTokens?: number }
   | { type: 'done'; citations: Citation[]; usage?: TokenUsage }
+  | { type: 'image'; reply: string; images: GeneratedImage[] }
   | { type: 'error'; error: string };
 
 function countTokens(value: unknown): number | undefined {
@@ -46,6 +47,8 @@ function parseStreamEvent(raw: string): StreamEvent | null {
     usage?: { promptTokens?: unknown; completionTokens?: unknown; totalTokens?: unknown };
     servedBy?: { model?: unknown; modelLabel?: unknown; label?: unknown };
     citations?: unknown;
+    reply?: unknown;
+    images?: unknown;
   };
   if (
     event.type === 'meta' &&
@@ -93,6 +96,17 @@ function parseStreamEvent(raw: string): StreamEvent | null {
         ? { promptTokens, completionTokens, totalTokens }
         : undefined;
     return { type: 'done', citations, ...(usage ? { usage } : {}) };
+  }
+  if (event.type === 'image' && Array.isArray(event.images)) {
+    const images = event.images.filter(
+      (entry): entry is GeneratedImage =>
+        !!entry &&
+        typeof entry === 'object' &&
+        typeof (entry as GeneratedImage).src === 'string' &&
+        typeof (entry as GeneratedImage).alt === 'string',
+    );
+    if (images.length === 0) return null;
+    return { type: 'image', reply: typeof event.reply === 'string' ? event.reply : '', images };
   }
   if (event.type === 'error' && typeof event.error === 'string') {
     return { type: 'error', error: event.error };
@@ -258,6 +272,8 @@ export default function ChatPanel({
         }),
       });
       const contentType = response.headers.get('content-type') ?? '';
+      // Replies, images included, arrive as a stream; a JSON body is always
+      // a refusal from before the work started.
       if (contentType.includes('application/json')) {
         const data = await response.json();
         if (response.status === 403 && data?.limitReached) {
@@ -268,23 +284,7 @@ export default function ChatPanel({
           setServerLimit(typeof data.limit === 'number' ? data.limit : 0);
           return;
         }
-        if (!response.ok) {
-          throw new Error(data.error ?? 'Something went wrong.');
-        }
-        if (data.servedBy?.model) setLastServedModel(data.servedBy.model);
-        setMessages((prev) => [
-          ...prev,
-          {
-            role: 'assistant',
-            content: data.reply,
-            servedBy: data.servedBy,
-            webSearch: data.webSearch,
-            imageGeneration: data.imageGeneration,
-            images: data.images,
-            citations: data.citations,
-          },
-        ]);
-        return;
+        throw new Error(data.error ?? 'Something went wrong.');
       }
 
       if (!response.ok || !contentType.includes('text/event-stream') || !response.body) {
@@ -345,6 +345,14 @@ export default function ChatPanel({
             };
             return next;
           });
+          return;
+        }
+        if (event.type === 'image') {
+          finished = true;
+          setMessages((prev) => [
+            ...prev,
+            { role: 'assistant', content: event.reply, imageGeneration: true, images: event.images },
+          ]);
           return;
         }
         failed = true;

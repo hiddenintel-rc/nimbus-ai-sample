@@ -73,6 +73,29 @@ function keepalive(): Uint8Array {
   return encoder.encode(`: keepalive\n\n`);
 }
 
+/** Writes a keepalive every KEEPALIVE_MS until the returned function is called. */
+function startKeepalive(controller: ReadableStreamDefaultController<Uint8Array>): () => void {
+  const beat = setInterval(() => {
+    try {
+      controller.enqueue(keepalive());
+    } catch {
+      clearInterval(beat);
+    }
+  }, KEEPALIVE_MS);
+  return () => clearInterval(beat);
+}
+
+function sseResponse(stream: ReadableStream<Uint8Array>): Response {
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      'X-Accel-Buffering': 'no',
+      'X-Content-Type-Options': 'nosniff',
+    },
+  });
+}
+
 function recordMetrics(
   tracker: LDAIConfigTracker | null,
   result: ChatCompletionResult | undefined,
@@ -172,19 +195,43 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'messages must end with a user prompt' }, { status: 400 });
     }
     const prompt = latest.content;
-    try {
-      const image = await generateImage(prompt);
-      return NextResponse.json({
-        reply: 'Generated from your prompt.',
-        images: [{ src: image.dataUrl, alt: prompt }],
-        imageGeneration: true,
-      });
-    } catch (error) {
-      console.error('[api/chat] image', error);
-      const message =
-        error instanceof Error ? error.message : 'Image generation failed. Please try again shortly.';
-      return NextResponse.json({ error: message }, { status: 502 });
-    }
+    // Streamed for the same reason chat is: a cold ComfyUI start can run past
+    // the proxy's read timeout, and a single JSON body sends nothing until the
+    // end. Cut off there, the browser would never see the upstream error.
+    return sseResponse(
+      new ReadableStream({
+        async start(controller) {
+          controller.enqueue(keepalive());
+          const stopKeepalive = startKeepalive(controller);
+          try {
+            const image = await generateImage(prompt);
+            controller.enqueue(
+              sse({
+                type: 'image',
+                reply: 'Generated from your prompt.',
+                images: [{ src: image.dataUrl, alt: prompt }],
+              }),
+            );
+          } catch (error) {
+            console.error('[api/chat] image', error);
+            const message =
+              error instanceof Error ? error.message : 'Image generation failed. Please try again shortly.';
+            try {
+              controller.enqueue(sse({ type: 'error', error: message }));
+            } catch {
+              // The browser already left.
+            }
+          } finally {
+            stopKeepalive();
+            try {
+              controller.close();
+            } catch {
+              // Already closed by the client.
+            }
+          }
+        },
+      }),
+    );
   }
 
   // AI Config (AgentControl) supplies the prompt and temperature for every
@@ -231,13 +278,7 @@ export async function POST(request: Request) {
 
   const stream = new ReadableStream({
     async start(controller) {
-      const beat = setInterval(() => {
-        try {
-          controller.enqueue(keepalive());
-        } catch {
-          clearInterval(beat);
-        }
-      }, KEEPALIVE_MS);
+      const stopKeepalive = startKeepalive(controller);
 
       let firstTokenAt: number | undefined;
       let result: ChatCompletionResult | undefined;
@@ -304,7 +345,7 @@ export async function POST(request: Request) {
           }
         }
       } finally {
-        clearInterval(beat);
+        stopKeepalive();
         request.signal.removeEventListener('abort', onClientAbort);
         recordMetrics(tracker, result, startedAt, firstTokenAt, failed);
         try {
@@ -320,12 +361,5 @@ export async function POST(request: Request) {
     },
   });
 
-  return new Response(stream, {
-    headers: {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache, no-transform',
-      'X-Accel-Buffering': 'no',
-      'X-Content-Type-Options': 'nosniff',
-    },
-  });
+  return sseResponse(stream);
 }

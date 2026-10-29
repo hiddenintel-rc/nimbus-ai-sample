@@ -168,9 +168,15 @@ the gap since the last byte from the app, 125 seconds by default, and a long
 answer can take longer than that to finish. While the model is quiet, during
 a load or a reasoning stretch, the route writes an
 SSE comment at least every 20 seconds. The upstream call is aborted at 7
-minutes. Image generation, and any failure before the stream starts, still
-return one JSON body. Token usage, duration, time to first token, and
-success are recorded on the AI Config tracker when the stream ends.
+minutes. Token usage, duration, time to first token, and success are
+recorded on the AI Config tracker when the stream ends.
+
+Image generation streams too, with the same keepalives, and ends in a single
+`image` or `error` event. It used to return one JSON body, which sent nothing
+until the picture was ready; once a request ran past the proxy's 125 seconds,
+Cloudflare closed it first, and the browser showed "the chat backend is
+unreachable" in place of the upstream's actual error. Only refusals made before
+any work starts (401, 400, the message allowance's 403) are still plain JSON.
 
 Every LaunchDarkly answer above comes from the SDK's in-memory copy of the
 rules, built from the session — never from anything the browser sends. The
