@@ -2,8 +2,7 @@
 
 import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-
-export type Citation = { n: number; url: string; title?: string };
+import type { Citation } from '@/lib/inference';
 
 /** Internal link scheme for citation markers; never reaches the DOM. */
 const CITE = 'cite:';

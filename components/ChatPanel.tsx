@@ -2,8 +2,15 @@
 
 import { useMemo, useState, type FormEvent } from 'react';
 import { useFlags } from 'launchdarkly-react-client-sdk';
-import MessageContent, { type Citation } from '@/components/MessageContent';
+import MessageContent from '@/components/MessageContent';
 import UpgradeCta from '@/components/UpgradeCta';
+import {
+  readServerEvents,
+  UNREACHABLE_MESSAGE,
+  type GeneratedImage,
+  type ServedBy,
+} from '@/lib/chat-stream';
+import type { Citation } from '@/lib/inference';
 import {
   countUserMessages,
   normalizeTierConfig,
@@ -12,144 +19,8 @@ import {
   type TierConfig,
 } from '@/lib/tier-config';
 
-type ServedBy = { model: string; modelLabel: string; label: string };
-type GeneratedImage = { src: string; alt: string };
-type TokenUsage = { promptTokens: number; completionTokens: number; totalTokens: number };
 type Feedback = 'positive' | 'negative';
-type StreamEvent =
-  | { type: 'meta'; servedBy: ServedBy; webSearch: boolean; maxTokens?: number }
-  | { type: 'delta'; text: string; completionTokens: number; promptTokens?: number }
-  | { type: 'done'; citations: Citation[]; usage?: TokenUsage; feedbackToken?: string }
-  | { type: 'image'; reply: string; images: GeneratedImage[] }
-  | { type: 'error'; error: string };
 
-function countTokens(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
-}
-
-const UNREACHABLE = 'The chat backend is unreachable right now. Please try again shortly.';
-
-function parseStreamEvent(raw: string): StreamEvent | null {
-  let value: unknown;
-  try {
-    value = JSON.parse(raw);
-  } catch {
-    return null;
-  }
-  if (!value || typeof value !== 'object') return null;
-  const event = value as {
-    type?: unknown;
-    text?: unknown;
-    error?: unknown;
-    webSearch?: unknown;
-    maxTokens?: unknown;
-    completionTokens?: unknown;
-    promptTokens?: unknown;
-    usage?: { promptTokens?: unknown; completionTokens?: unknown; totalTokens?: unknown };
-    servedBy?: { model?: unknown; modelLabel?: unknown; label?: unknown };
-    citations?: unknown;
-    reply?: unknown;
-    images?: unknown;
-    feedbackToken?: unknown;
-  };
-  if (
-    event.type === 'meta' &&
-    event.servedBy &&
-    typeof event.servedBy.model === 'string' &&
-    typeof event.servedBy.modelLabel === 'string' &&
-    typeof event.servedBy.label === 'string'
-  ) {
-    return {
-      type: 'meta',
-      servedBy: {
-        model: event.servedBy.model,
-        modelLabel: event.servedBy.modelLabel,
-        label: event.servedBy.label,
-      },
-      webSearch: event.webSearch === true,
-      ...(countTokens(event.maxTokens) !== undefined ? { maxTokens: countTokens(event.maxTokens) } : {}),
-    };
-  }
-  if (event.type === 'delta' && countTokens(event.completionTokens) !== undefined) {
-    return {
-      type: 'delta',
-      text: typeof event.text === 'string' ? event.text : '',
-      completionTokens: countTokens(event.completionTokens)!,
-      ...(countTokens(event.promptTokens) !== undefined
-        ? { promptTokens: countTokens(event.promptTokens) }
-        : {}),
-    };
-  }
-  if (event.type === 'done') {
-    const citations = Array.isArray(event.citations)
-      ? event.citations.filter(
-          (entry): entry is Citation =>
-            !!entry &&
-            typeof entry === 'object' &&
-            typeof (entry as Citation).n === 'number' &&
-            typeof (entry as Citation).url === 'string',
-        )
-      : [];
-    const promptTokens = countTokens(event.usage?.promptTokens);
-    const completionTokens = countTokens(event.usage?.completionTokens);
-    const totalTokens = countTokens(event.usage?.totalTokens);
-    const usage =
-      promptTokens !== undefined && completionTokens !== undefined && totalTokens !== undefined
-        ? { promptTokens, completionTokens, totalTokens }
-        : undefined;
-    return {
-      type: 'done',
-      citations,
-      ...(usage ? { usage } : {}),
-      ...(typeof event.feedbackToken === 'string' ? { feedbackToken: event.feedbackToken } : {}),
-    };
-  }
-  if (event.type === 'image' && Array.isArray(event.images)) {
-    const images = event.images.filter(
-      (entry): entry is GeneratedImage =>
-        !!entry &&
-        typeof entry === 'object' &&
-        typeof (entry as GeneratedImage).src === 'string' &&
-        typeof (entry as GeneratedImage).alt === 'string',
-    );
-    if (images.length === 0) return null;
-    return { type: 'image', reply: typeof event.reply === 'string' ? event.reply : '', images };
-  }
-  if (event.type === 'error' && typeof event.error === 'string') {
-    return { type: 'error', error: event.error };
-  }
-  return null;
-}
-
-/** Reads SSE `data:` events. Lines that start with `:` are comments and are skipped. */
-async function readServerEvents(
-  body: ReadableStream<Uint8Array>,
-  onEvent: (event: StreamEvent) => void,
-) {
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n');
-    let splitAt = buffer.indexOf('\n\n');
-    while (splitAt !== -1) {
-      const raw = buffer.slice(0, splitAt);
-      buffer = buffer.slice(splitAt + 2);
-      const data = raw
-        .split('\n')
-        .filter((line) => line.startsWith('data:'))
-        .map((line) => line.slice(5).trimStart())
-        .join('\n');
-      if (data) {
-        const event = parseStreamEvent(data);
-        if (event) onEvent(event);
-      }
-      splitAt = buffer.indexOf('\n\n');
-    }
-  }
-}
 type Message = {
   role: 'user' | 'assistant';
   content: string;
@@ -183,7 +54,7 @@ function replyStatus(messages: Message[]): string | null {
     if (!message.servedBy) continue;
     const parts = [
       `served by ${message.servedBy.modelLabel || message.servedBy.model}`,
-      `${message.servedBy.label} config`,
+      `${message.servedBy.planLabel} plan`,
     ];
     const meter = tokenMeter(message);
     if (meter) parts.push(`${meter} tokens`);
@@ -191,6 +62,15 @@ function replyStatus(messages: Message[]): string | null {
     return parts.join(' · ');
   }
   return null;
+}
+
+const TOGGLE_ON =
+  'self-center rounded-full border border-blue-600 bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700 dark:border-blue-500 dark:bg-blue-950 dark:text-blue-300';
+const TOGGLE_OFF =
+  'self-center rounded-full border border-black/[.1] px-3 py-1 text-xs font-medium text-zinc-950 hover:border-black/[.3] dark:border-white/[.145] dark:text-white';
+
+function toggleClass(on: boolean): string {
+  return on ? TOGGLE_ON : TOGGLE_OFF;
 }
 
 /** 👍 / 👎 under a reply: the prompt experiment's primary metric. */
@@ -259,7 +139,7 @@ export default function ChatPanel({
   const searchRequested = webSearchAvailable && webSearch && !(imageGenerationAvailable && imageGeneration);
   const imageRequested = imageGenerationAvailable && imageGeneration;
 
-  // Until chat-tier-config is available to client-side SDKs, the flag is
+  // If chat-tier-config isn't available to client-side SDKs, the flag is
   // missing here and the server-rendered value is used (no live updates).
   const liveTierConfig: unknown = flags['chat-tier-config'];
   const tierConfig = useMemo(
@@ -293,8 +173,8 @@ export default function ChatPanel({
     setReceiving(false);
     setSearching(searchRequested);
     setGeneratingImage(imageRequested);
-    // The home lab keeps one model loaded at a time, so a different model
-    // (or a slow one on the first message) means a reload before it answers.
+    // A single-GPU backend loads one model at a time, so a different model
+    // (or a slow one on the first message) is loaded before it answers.
     const needsLoad =
       !imageRequested &&
       (lastServedModel ? selectedModel.id !== lastServedModel : Boolean(selectedModel.slow));
@@ -331,7 +211,7 @@ export default function ChatPanel({
       }
 
       if (!response.ok || !contentType.includes('text/event-stream') || !response.body) {
-        throw new Error(UNREACHABLE);
+        throw new Error(UNREACHABLE_MESSAGE);
       }
 
       let finished = false;
@@ -402,7 +282,7 @@ export default function ChatPanel({
         failed = true;
         setError(event.error);
       });
-      if (!finished && !failed) throw new Error(UNREACHABLE);
+      if (!finished && !failed) throw new Error(UNREACHABLE_MESSAGE);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong.');
     } finally {
@@ -557,7 +437,7 @@ export default function ChatPanel({
           ))}
           {tierConfig.lockedModels.map((model) => (
             <option key={model.id} value={model.id} disabled>
-              {model.label} &mdash; {model.requiredTier}
+              {model.label} &mdash; {model.requiredPlan}
             </option>
           ))}
         </select>
@@ -566,11 +446,7 @@ export default function ChatPanel({
             type="button"
             aria-pressed={imageGeneration}
             onClick={() => setImageGeneration((on) => !on)}
-            className={
-              imageGeneration
-                ? 'self-center rounded-full border border-blue-600 bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700 dark:border-blue-500 dark:bg-blue-950 dark:text-blue-300'
-                : 'self-center rounded-full border border-black/[.1] px-3 py-1 text-xs font-medium text-zinc-950 hover:border-black/[.3] dark:border-white/[.145] dark:text-white'
-            }
+            className={toggleClass(imageGeneration)}
           >
             Generate an image: {imageGeneration ? 'On' : 'Off'}
           </button>
@@ -580,20 +456,15 @@ export default function ChatPanel({
             type="button"
             aria-pressed={webSearch}
             onClick={() => setWebSearch((on) => !on)}
-            className={
-              webSearch
-                ? 'self-center rounded-full border border-blue-600 bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700 dark:border-blue-500 dark:bg-blue-950 dark:text-blue-300'
-                : 'self-center rounded-full border border-black/[.1] px-3 py-1 text-xs font-medium text-zinc-950 hover:border-black/[.3] dark:border-white/[.145] dark:text-white'
-            }
+            className={toggleClass(webSearch)}
           >
             Search the web: {webSearch ? 'On' : 'Off'}
           </button>
         )}
       </div>
 
-      {/* One upsell, not two: while there is room left it sits quietly under
-          the controls, and once the wall is up it moves into the wall, where
-          the user has an actual reason to press it. */}
+      {/* Only one Upgrade button is shown: under the controls while messages
+          remain, and inside the limit notice once the limit is reached. */}
       {canUpgrade && !limitReached && <UpgradeCta />}
     </div>
   );

@@ -2,15 +2,15 @@ export type TierModel = {
   /** Model ID sent to the inference backend (an Open WebUI / llama.cpp router ID). */
   id: string;
   label: string;
-  /** Larger model or separate context stanza — the first reply after switching to it reloads it. */
+  /** Takes longer to load (a larger model or a separate context size), so the menu labels it. */
   slow?: boolean;
 };
 
 export type LockedModel = {
   id: string;
   label: string;
-  /** Plan name shown next to the greyed-out entry, e.g. "Pro". */
-  requiredTier: string;
+  /** Plan name shown next to the greyed-out entry, e.g. "Pro". Read from the flag's `requiredTier` field. */
+  requiredPlan: string;
 };
 
 export type TierConfig = {
@@ -42,16 +42,15 @@ export type TierConfig = {
 export const DEFAULT_TIER_CONFIG: TierConfig = {
   models: [{ id: 'Qwen3.5-4B', label: 'Qwen 4B' }],
   lockedModels: [
-    { id: 'Qwen3.5-4B-128k', label: 'Qwen 4B · long context', requiredTier: 'Pro' },
-    { id: 'Qwen3-Coder-30B-A3B-Instruct-UD-Q4_K_XL', label: 'Qwen Coder 30B', requiredTier: 'Enterprise' },
-    { id: 'Qwen3.8-27B-UD-Q3_K_XL', label: 'Qwen 3.8 27B', requiredTier: 'Enterprise' },
+    { id: 'Qwen3.5-4B-128k', label: 'Qwen 4B · long context', requiredPlan: 'Pro' },
+    { id: 'Qwen3-Coder-30B-A3B-Instruct-UD-Q4_K_XL', label: 'Qwen Coder 30B', requiredPlan: 'Enterprise' },
+    { id: 'Qwen3.8-27B-UD-Q3_K_XL', label: 'Qwen 3.8 27B', requiredPlan: 'Enterprise' },
   ],
   defaultModel: 'Qwen3.5-4B',
   maxContextMessages: 4,
-  // Deliberately no `maxMessagesPerConversation`. This value is what the app
-  // falls back to when LaunchDarkly is unreachable, and refusing to answer
-  // someone because a flag could not be read is worse than letting a few extra
-  // messages through: the quota fails open.
+  // No `maxMessagesPerConversation`: this fallback applies when LaunchDarkly
+  // is unreachable, and the message quota is designed to fail open, so a
+  // flag that can't be read never blocks a reply.
   label: 'Free',
 };
 
@@ -69,14 +68,12 @@ function positiveInteger(value: unknown): number | undefined {
 
 /**
  * Flag values are edited by hand in the LaunchDarkly dashboard, so anything
- * malformed falls back field by field instead of breaking the chat. Also
- * accepts the older single-model shape (`{ model, maxContextMessages, label }`)
- * so the app keeps working while the variations are being migrated.
+ * malformed falls back field by field instead of breaking the chat.
  */
 export function normalizeTierConfig(raw: unknown): TierConfig {
   if (!isRecord(raw)) return DEFAULT_TIER_CONFIG;
 
-  let models: TierModel[] = Array.isArray(raw.models)
+  const models: TierModel[] = Array.isArray(raw.models)
     ? raw.models.filter(isRecord).flatMap((entry) =>
         nonEmptyString(entry.id)
           ? [
@@ -89,9 +86,6 @@ export function normalizeTierConfig(raw: unknown): TierConfig {
           : [],
       )
     : [];
-  if (models.length === 0 && nonEmptyString(raw.model)) {
-    models = [{ id: raw.model, label: raw.model }];
-  }
   if (models.length === 0) return DEFAULT_TIER_CONFIG;
 
   const allowed = new Set(models.map((model) => model.id));
@@ -102,7 +96,7 @@ export function normalizeTierConfig(raw: unknown): TierConfig {
               {
                 id: entry.id,
                 label: nonEmptyString(entry.label) ? entry.label : entry.id,
-                requiredTier: nonEmptyString(entry.requiredTier) ? entry.requiredTier : 'a higher plan',
+                requiredPlan: nonEmptyString(entry.requiredTier) ? entry.requiredTier : 'a higher plan',
               },
             ]
           : [],

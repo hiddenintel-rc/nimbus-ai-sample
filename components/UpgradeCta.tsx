@@ -3,10 +3,10 @@
 import { useState } from 'react';
 
 /**
- * Shown only to free-tier accounts. Clicking it fires the `clicked-upgrade`
- * event behind the `upgrade-interest` metric, which the show-plan-comparison
- * experiment measures — there's no
- * real checkout behind this, it only records intent.
+ * The upsell button; the caller decides who sees it (ChatPanel shows it to
+ * free-tier accounts). Clicking it fires the `clicked-upgrade` event behind
+ * the `upgrade-interest` metric, which the show-plan-comparison experiment
+ * measures. There is no checkout behind it; it only records intent.
  */
 export default function UpgradeCta() {
   const [state, setState] = useState<'idle' | 'sending' | 'done'>('idle');

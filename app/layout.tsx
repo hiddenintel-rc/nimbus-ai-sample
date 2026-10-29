@@ -1,33 +1,33 @@
-import type { Metadata } from "next";
-import { Geist, Geist_Mono, Baloo_2 } from "next/font/google";
-import LDClientProvider from "@/components/LDClientProvider";
-import { auth } from "@/lib/auth";
-import { buildUserContext } from "@/lib/ld-server";
-import "./globals.css";
+import type { Metadata } from 'next';
+import { Geist, Geist_Mono, Baloo_2 } from 'next/font/google';
+import LDClientProvider from '@/components/LDClientProvider';
+import { auth } from '@/lib/auth';
+import { buildUserContext } from '@/lib/ld-server';
+import './globals.css';
 
 const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
+  variable: '--font-geist-sans',
+  subsets: ['latin'],
 });
 
 const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
+  variable: '--font-geist-mono',
+  subsets: ['latin'],
 });
 
 const baloo = Baloo_2({
-  variable: "--font-baloo",
-  subsets: ["latin"],
-  weight: ["600"],
+  variable: '--font-baloo',
+  subsets: ['latin'],
+  weight: ['600'],
 });
 
 export const metadata: Metadata = {
-  title: "Nimbus — AI chat that scales with your plan",
+  title: 'Nimbus — AI chat that scales with your plan',
   description:
-    "Nimbus is a demo project exploring tiered AI chat access, powered by LaunchDarkly for feature flags, targeting, and experimentation.",
+    'Nimbus is a demo project exploring tiered AI chat access, powered by LaunchDarkly for feature flags, targeting, and experimentation.',
 };
 
-export default async function RootLayout({ children }: LayoutProps<"/">) {
+export default async function RootLayout({ children }: LayoutProps<'/'>) {
   const session = await auth();
   const ldContext = session?.user ? buildUserContext(session.user) : undefined;
 

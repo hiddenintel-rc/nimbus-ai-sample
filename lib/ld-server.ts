@@ -28,8 +28,9 @@ function getSdkKey(): string {
  * SDK keeps retrying the connection on its own, and `variation()` on a client
  * that isn't ready returns the default value passed at the call site (or the
  * last known one). Rejecting here would instead cache the rejection in
- * `clientPromise` for the life of the process, so one blip would keep every
- * later request failing long after LaunchDarkly came back.
+ * `clientPromise` for the life of the process, so a single failed start
+ * would keep every later request failing after LaunchDarkly is reachable
+ * again.
  */
 export function getLDClient(): Promise<LDClient> {
   if (!clientPromise) {
@@ -63,10 +64,10 @@ export async function getAiClient(): Promise<LDAIClient> {
 
 /**
  * Builds the LD context for a logged-in demo user. `key` is what individual
- * targeting matches on and `tier` is what the rules on `chat-tier-config`
- * match on. `accountAgeDays` is sent so a second attribute is available to
- * target on, but no rule uses it yet; it is there for a loyalty-style rule
- * (e.g. accountAgeDays >= 365 serves a higher tier).
+ * targeting matches on, and `tier` is what the targeting rules match on
+ * (`show-plan-comparison`, `chat-tier-config`). `accountAgeDays` is sent so a
+ * second attribute is available to target on; no rule uses it. It suits a
+ * loyalty-style rule (e.g. accountAgeDays >= 365 serves a higher tier).
  */
 export function buildUserContext(user: {
   id: string;

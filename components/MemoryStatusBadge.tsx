@@ -6,10 +6,9 @@ const BASE = 'rounded-full px-2.5 py-1 text-xs font-medium';
 const NEUTRAL = `${BASE} bg-zinc-100 text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400`;
 
 /**
- * Live, no-reload indicator for `enable-conversation-memory`. Toggling the
- * flag in the LD dashboard flips this instantly via the client SDK's
- * streaming connection — the same mechanism the flag's trigger relies on
- * for remediation.
+ * Live, no-reload indicator for `enable-conversation-memory`. A change to
+ * the flag, whether toggled in the LD dashboard or by its remediation
+ * trigger, reaches this badge through the client SDK's streaming connection.
  *
  * The flag is missing from `useFlags()` until the SDK's first payload
  * arrives, and stays missing if the flag isn't available to client-side

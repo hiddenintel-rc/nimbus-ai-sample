@@ -6,13 +6,13 @@ export type DemoUser = {
   id: string;
   email: string;
   tier: Tier;
-  /** Second targetable attribute alongside tier. Sent, but no rule uses it yet. */
+  /** Second targetable attribute alongside tier. Sent to LaunchDarkly; no rule uses it. */
   accountAgeDays: number;
 };
 
 // Every demo account shares one password, read from DEMO_PASSWORD in
-// .env.local — never committed, so the chat (and the GPU behind it) stays
-// limited to people the operator shares it with.
+// .env.local. It is never committed, so only people given the password can
+// use the chat and the model backend behind it.
 let demoPasswordHash: string | null | undefined;
 
 function getDemoPasswordHash(): string | null {

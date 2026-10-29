@@ -16,7 +16,8 @@ import {
   overMessageLimit,
   resolveModel,
 } from '@/lib/tier-config';
-import { AI_CONFIG_KEY, DEFAULT_AI_CONFIG } from '@/lib/ai-config';
+import { AI_CONFIG_KEY, DEFAULT_AI_CONFIG, numericTemperature } from '@/lib/ai-config';
+import { UNREACHABLE_MESSAGE, type ServedBy } from '@/lib/chat-stream';
 import { signFeedbackToken } from '@/lib/feedback-token';
 import { runJudges } from '@/lib/judge';
 import { modelContextTokens } from '@/lib/model-context';
@@ -42,25 +43,6 @@ function isValidHistory(value: unknown): value is IncomingMessage[] {
         entry.content.trim().length > 0,
     )
   );
-}
-
-type ServedBy = { model: string; modelLabel: string; label: string };
-
-/**
- * AI Config parameters are typed `unknown` and entered by hand in the
- * dashboard, so a non-numeric `temperature` is dropped instead of being sent
- * to the inference call — the same field-by-field fallback `normalizeTierConfig`
- * applies to the tier flag. Letting it through would fail the whole request
- * upstream, and the browser would only see "the backend is unreachable".
- */
-function temperatureParameter(value: unknown): number | undefined {
-  if (typeof value !== 'number' || !Number.isFinite(value)) {
-    if (value !== undefined) {
-      console.error('[api/chat] ignoring non-numeric temperature from the AI Config:', value);
-    }
-    return undefined;
-  }
-  return value;
 }
 
 const KEEPALIVE_MS = 20_000;
@@ -159,8 +141,9 @@ export async function POST(request: Request) {
 
   // The flag keys below must exist in your own LaunchDarkly environment —
   // see "Re-create the LaunchDarkly flags" in the README for exact keys,
-  // variations, and targeting. The default values passed here only cover
-  // LaunchDarkly being briefly unreachable, not a missing/never-created flag.
+  // variations, and targeting. The default values passed here are what the
+  // SDK returns when LaunchDarkly is unreachable or a flag doesn't exist:
+  // a conservative free-plan fallback, not a substitute for creating the flags.
   const memoryEnabled = await client.variation('enable-conversation-memory', context, false);
   const tierConfig = normalizeTierConfig(
     await client.variation('chat-tier-config', context, DEFAULT_TIER_CONFIG),
@@ -236,7 +219,7 @@ export async function POST(request: Request) {
     );
   }
 
-  // AI Config (AgentControl) supplies the prompt and temperature for every
+  // The AI Config supplies the prompt and temperature for every
   // account, and its model becomes the default pick — but only when this
   // tier's chat-tier-config allows that model. The user's own pick from the
   // model menu wins, and is likewise ignored unless the tier allows it.
@@ -250,10 +233,9 @@ export async function POST(request: Request) {
     aiConfig.enabled ? aiConfig.model?.name : undefined,
   );
 
-  // With memory off (legacy behavior), only the latest message is sent —
-  // every turn is treated as a fresh conversation, same as before that flag
-  // existed. With memory on, the tier config's context window caps how much
-  // history this account's plan is allowed to carry.
+  // With memory off, only the latest message is sent, so every turn is
+  // answered as a new conversation. With memory on, the tier config's context
+  // window caps how much history this account's plan may carry.
   // Only role and content go upstream. The browser's copy of each message
   // also carries UI state (captions, citations, feedback tokens).
   const relevantHistory: ChatMessage[] = (
@@ -261,18 +243,11 @@ export async function POST(request: Request) {
   ).map(({ role, content }) => ({ role, content }));
 
   const systemMessages: ChatMessage[] =
-    aiConfig.enabled && aiConfig.messages?.length
-      ? aiConfig.messages
-      : [
-          {
-            role: 'system',
-            content: 'You are the Nimbus assistant, a helpful AI chat demo. Keep replies concise.',
-          },
-        ];
+    aiConfig.enabled && aiConfig.messages?.length ? aiConfig.messages : (DEFAULT_AI_CONFIG.messages ?? []);
 
   const messages: ChatMessage[] = [...systemMessages, ...relevantHistory];
-  const temperature = temperatureParameter(aiConfig.model?.parameters?.temperature);
-  const servedBy: ServedBy = { model: model.id, modelLabel: model.label, label: tierConfig.label };
+  const temperature = numericTemperature(aiConfig.model?.parameters?.temperature);
+  const servedBy: ServedBy = { model: model.id, modelLabel: model.label, planLabel: tierConfig.label };
   const tracker = aiConfig.enabled ? aiConfig.createTracker() : null;
   // Lets a later 👍 / 👎 reach this exact run — see lib/feedback-token.ts.
   const feedbackToken = tracker ? signFeedbackToken(tracker.resumptionToken, session.user.id) : undefined;
@@ -291,7 +266,7 @@ export async function POST(request: Request) {
       let failed = false;
 
       try {
-        // Goes out before the model is loaded, so the edge sees bytes during a swap.
+        // Sent before the model loads, so the proxy receives bytes during a model swap.
         const maxTokens = modelContextTokens(model.id);
         controller.enqueue(
           sse({
@@ -341,12 +316,7 @@ export async function POST(request: Request) {
         // The browser already left; writing an error event has nowhere to go.
         if (!request.signal.aborted && !upstream.signal.aborted) {
           try {
-            controller.enqueue(
-              sse({
-                type: 'error',
-                error: 'The chat backend is unreachable right now. Please try again shortly.',
-              }),
-            );
+            controller.enqueue(sse({ type: 'error', error: UNREACHABLE_MESSAGE }));
           } catch {
             // The stream closed between the failure and this write.
           }

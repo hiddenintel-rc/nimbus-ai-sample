@@ -16,8 +16,8 @@ COPY . .
 
 # NEXT_PUBLIC_* values are inlined into the browser bundle during `next build`,
 # so this has to be set here. Passing it only at `docker run` leaves the client
-# SDK disabled with no error — the live Memory badge and logo swap would simply
-# never respond to flag changes, while server-side flags kept working.
+# SDK disabled with no error: the live Memory badge and logo swap never respond
+# to flag changes, while server-side flags keep working.
 ARG NEXT_PUBLIC_LAUNCHDARKLY_CLIENT_ID
 ENV NEXT_PUBLIC_LAUNCHDARKLY_CLIENT_ID=$NEXT_PUBLIC_LAUNCHDARKLY_CLIENT_ID
 

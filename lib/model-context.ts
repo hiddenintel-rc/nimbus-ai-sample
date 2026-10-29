@@ -1,7 +1,7 @@
 /**
- * Context window each router ID is actually loaded with.
- * These are the `ctx-size` values in Local AI `llama-models.ini`, which is
- * what llama.cpp will accept for that model. A reply cannot use more.
+ * Context window, in tokens, that the backend loads each model ID with: the
+ * llama.cpp `ctx-size` configured for that model on the self-hosted backend.
+ * A reply cannot use more. Update these if the backend's settings change.
  */
 const MODEL_CONTEXT_TOKENS: Record<string, number> = {
   'Qwen3.5-4B': 32_768,

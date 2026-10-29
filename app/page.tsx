@@ -1,14 +1,14 @@
-import Image from "next/image";
-import BrandLogo from "@/components/BrandLogo";
-import ChatPanel from "@/components/ChatPanel";
-import LDUserSync from "@/components/LDUserSync";
-import MemoryStatusBadge from "@/components/MemoryStatusBadge";
-import PlanComparison from "@/components/PlanComparison";
-import { auth } from "@/lib/auth";
-import { logoutAction } from "@/lib/auth-actions";
-import { AI_CONFIG_KEY, DEFAULT_AI_CONFIG } from "@/lib/ai-config";
-import { buildUserContext, getAiClient, getLDClient } from "@/lib/ld-server";
-import { DEFAULT_TIER_CONFIG, normalizeTierConfig, type TierConfig } from "@/lib/tier-config";
+import Image from 'next/image';
+import BrandLogo from '@/components/BrandLogo';
+import ChatPanel from '@/components/ChatPanel';
+import LDUserSync from '@/components/LDUserSync';
+import MemoryStatusBadge from '@/components/MemoryStatusBadge';
+import PlanComparison from '@/components/PlanComparison';
+import { auth } from '@/lib/auth';
+import { logoutAction } from '@/lib/auth-actions';
+import { AI_CONFIG_KEY, DEFAULT_AI_CONFIG } from '@/lib/ai-config';
+import { buildUserContext, getAiClient, getLDClient } from '@/lib/ld-server';
+import { DEFAULT_TIER_CONFIG, normalizeTierConfig, type TierConfig } from '@/lib/tier-config';
 
 /**
  * Same evaluation /api/chat does, so the model menu is right on first paint.
@@ -22,7 +22,7 @@ async function loadChatSettings(
     const context = buildUserContext(user);
     const client = await getLDClient();
     const tierConfig = normalizeTierConfig(
-      await client.variation("chat-tier-config", context, DEFAULT_TIER_CONFIG),
+      await client.variation('chat-tier-config', context, DEFAULT_TIER_CONFIG),
     );
     const aiConfig = await (await getAiClient()).completionConfig(
       AI_CONFIG_KEY,
@@ -34,7 +34,7 @@ async function loadChatSettings(
       aiDefaultModel: aiConfig.enabled ? aiConfig.model?.name : undefined,
     };
   } catch (error) {
-    console.error("[page] LaunchDarkly evaluation failed", error);
+    console.error('[page] LaunchDarkly evaluation failed', error);
     return { tierConfig: DEFAULT_TIER_CONFIG };
   }
 }
@@ -48,9 +48,9 @@ async function loadPlanComparison(
 ): Promise<boolean> {
   try {
     const client = await getLDClient();
-    return await client.variation("show-plan-comparison", buildUserContext(user), false);
+    return await client.variation('show-plan-comparison', buildUserContext(user), false);
   } catch (error) {
-    console.error("[page] LaunchDarkly evaluation failed", error);
+    console.error('[page] LaunchDarkly evaluation failed', error);
     return false;
   }
 }
@@ -129,13 +129,11 @@ export default async function Home() {
             )}
           </div>
           {session?.user ? (
-            <>
-              <ChatPanel
-                initialTierConfig={chatSettings?.tierConfig ?? DEFAULT_TIER_CONFIG}
-                aiDefaultModel={chatSettings?.aiDefaultModel}
-                canUpgrade={session.user.tier === "free"}
-              />
-            </>
+            <ChatPanel
+              initialTierConfig={chatSettings?.tierConfig ?? DEFAULT_TIER_CONFIG}
+              aiDefaultModel={chatSettings?.aiDefaultModel}
+              canUpgrade={session.user.tier === 'free'}
+            />
           ) : (
             <div className="flex flex-col items-start gap-3 py-4">
               <p className="text-sm text-zinc-500 dark:text-zinc-500">

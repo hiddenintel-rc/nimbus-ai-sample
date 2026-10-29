@@ -27,32 +27,42 @@ export function supportsImageGeneration(): boolean {
 let localClient: OpenAI | undefined;
 let groqClient: OpenAI | undefined;
 
+function requiredEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`${name} is not set. Copy .env.example to .env.local and fill it in.`);
+  }
+  return value;
+}
+
+/** Base URL of Open WebUI's OpenAI-compatible API, without a trailing slash. */
+function localBaseUrl(): string {
+  return requiredEnv('LOCAL_AI_BASE_URL').replace(/\/$/, '');
+}
+
 /**
- * Local AI stack (Open WebUI's OpenAI-compatible API), reached through a
- * Cloudflare Tunnel on a dedicated hostname whose Access application allows
- * Service Auth only. Never points at llama.cpp's own port directly — that's
- * intentionally loopback-only.
+ * Cloudflare Access service-token headers, sent only when both variables are
+ * set: needed when LOCAL_AI_BASE_URL is a hostname behind Cloudflare Access,
+ * and left blank when the app reaches Open WebUI on a private network.
+ */
+function cloudflareAccessHeaders(): Record<string, string> {
+  const clientId = process.env.CF_ACCESS_CLIENT_ID;
+  const clientSecret = process.env.CF_ACCESS_CLIENT_SECRET;
+  return clientId && clientSecret
+    ? { 'CF-Access-Client-Id': clientId, 'CF-Access-Client-Secret': clientSecret }
+    : {};
+}
+
+/**
+ * Open WebUI's OpenAI-compatible API. LOCAL_AI_BASE_URL points at Open WebUI,
+ * never at llama.cpp's own port, which stays loopback-only.
  */
 function getLocalClient(): OpenAI {
   if (!localClient) {
-    const baseURL = process.env.LOCAL_AI_BASE_URL;
-    const apiKey = process.env.LOCAL_AI_API_KEY;
-    if (!baseURL || !apiKey) {
-      throw new Error(
-        'LOCAL_AI_BASE_URL / LOCAL_AI_API_KEY are not set. Copy .env.example to .env.local and fill them in.',
-      );
-    }
-
-    const cfClientId = process.env.CF_ACCESS_CLIENT_ID;
-    const cfClientSecret = process.env.CF_ACCESS_CLIENT_SECRET;
-
     localClient = new OpenAI({
-      baseURL,
-      apiKey,
-      defaultHeaders: {
-        ...(cfClientId ? { 'CF-Access-Client-Id': cfClientId } : {}),
-        ...(cfClientSecret ? { 'CF-Access-Client-Secret': cfClientSecret } : {}),
-      },
+      baseURL: localBaseUrl(),
+      apiKey: requiredEnv('LOCAL_AI_API_KEY'),
+      defaultHeaders: cloudflareAccessHeaders(),
     });
   }
   return localClient;
@@ -61,11 +71,10 @@ function getLocalClient(): OpenAI {
 /** Manual, opt-in fallback — only used when INFERENCE_PROVIDER=groq is set explicitly. */
 function getGroqClient(): OpenAI {
   if (!groqClient) {
-    const apiKey = process.env.GROQ_API_KEY;
-    if (!apiKey) {
-      throw new Error('GROQ_API_KEY is not set. Copy .env.example to .env.local and fill it in.');
-    }
-    groqClient = new OpenAI({ baseURL: 'https://api.groq.com/openai/v1', apiKey });
+    groqClient = new OpenAI({
+      baseURL: 'https://api.groq.com/openai/v1',
+      apiKey: requiredEnv('GROQ_API_KEY'),
+    });
   }
   return groqClient;
 }
@@ -79,7 +88,11 @@ export type ChatCompletionResult = {
   citations?: Citation[];
 };
 
-/** One streamed piece of a reply. `completionTokens` counts generated tokens so far, including reasoning that is not shown. */
+/**
+ * One streamed chunk of a reply. `completionTokens` is the number of chunks
+ * received so far, reasoning included, as an estimate of generated tokens;
+ * it is replaced by the provider's own count once usage is reported.
+ */
 export type ChatDelta = {
   text: string;
   completionTokens: number;
@@ -124,8 +137,8 @@ type OpenWebUIParams = ChatCompletionCreateParamsStreaming & {
 };
 
 /**
- * Streams the assistant's reply. Each yield is one generated token: visible
- * text, or a reasoning token that only advances the count. The return value
+ * Streams the assistant's reply. Each yield is one streamed chunk: visible
+ * text, or reasoning that only advances the count. The return value
  * carries the full reply, token usage, and any web-search citations.
  * Pass `signal` to stop early when the browser disconnects; the call also
  * stops on its own after {@link CHAT_TIMEOUT_MS}.
@@ -164,8 +177,8 @@ export async function* chatCompletion(
       | { content?: string | null; reasoning_content?: string | null; reasoning?: string | null }
       | undefined;
     const text = typeof delta?.content === 'string' ? delta.content : '';
-    // Qwen 3.8 spends tokens on reasoning before the visible answer. Those
-    // still occupy the context window, so the counter has to move for them.
+    // Reasoning models emit reasoning before the visible answer. It still
+    // occupies the context window, so it advances the count too.
     const reasoningText =
       typeof delta?.reasoning_content === 'string'
         ? delta.reasoning_content
@@ -214,29 +227,10 @@ const IMAGE_TIMEOUT_MS = process.env.VERCEL ? 55_000 : 240_000;
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 
 function localAuthHeaders(): Record<string, string> {
-  const apiKey = process.env.LOCAL_AI_API_KEY;
-  if (!apiKey) {
-    throw new Error(
-      'LOCAL_AI_API_KEY is not set. Copy .env.example to .env.local and fill it in.',
-    );
-  }
-  const cfClientId = process.env.CF_ACCESS_CLIENT_ID;
-  const cfClientSecret = process.env.CF_ACCESS_CLIENT_SECRET;
   return {
-    Authorization: `Bearer ${apiKey}`,
-    ...(cfClientId ? { 'CF-Access-Client-Id': cfClientId } : {}),
-    ...(cfClientSecret ? { 'CF-Access-Client-Secret': cfClientSecret } : {}),
+    Authorization: `Bearer ${requiredEnv('LOCAL_AI_API_KEY')}`,
+    ...cloudflareAccessHeaders(),
   };
-}
-
-function localBaseUrl(): string {
-  const baseURL = process.env.LOCAL_AI_BASE_URL;
-  if (!baseURL) {
-    throw new Error(
-      'LOCAL_AI_BASE_URL is not set. Copy .env.example to .env.local and fill it in.',
-    );
-  }
-  return baseURL.replace(/\/$/, '');
 }
 
 /** Turn Open WebUI's file path into a URL on the same host as the chat API. */
@@ -245,7 +239,8 @@ export function resolveOpenWebUIUrl(url: string, baseURL: string): string {
   return new URL(url, new URL(baseURL).origin).href;
 }
 
-async function upstreamError(response: Response): Promise<string> {
+/** The most useful error text in a failed Open WebUI response. */
+async function readUpstreamError(response: Response): Promise<string> {
   const text = await response.text();
   try {
     const body = JSON.parse(text) as { detail?: unknown };
@@ -280,7 +275,7 @@ export async function generateImage(prompt: string): Promise<{ dataUrl: string }
   });
 
   if (!created.ok) {
-    throw new Error(await upstreamError(created));
+    throw new Error(await readUpstreamError(created));
   }
 
   const payload = (await created.json()) as unknown;
@@ -299,7 +294,7 @@ export async function generateImage(prompt: string): Promise<{ dataUrl: string }
     signal: AbortSignal.timeout(IMAGE_TIMEOUT_MS),
   });
   if (!file.ok) {
-    throw new Error(await upstreamError(file));
+    throw new Error(await readUpstreamError(file));
   }
 
   const mediaType = file.headers.get('content-type')?.split(';')[0]?.trim() || 'image/png';

@@ -2,20 +2,15 @@
  * Generates synthetic free-tier traffic against `show-plan-comparison` so the
  * experiment on its free-tier rule (control: no "Compare plans" block,
  * treatment: block shown, among tier == "free" contexts) has enough sample
- * size for LaunchDarkly's results page to show a real readout. This app has
- * no production audience, so this is a documented stand-in for it — not an
- * attempt to fabricate a conclusion.
+ * size for LaunchDarkly's results page to show a readout. This app has no
+ * production audience, so this traffic stands in for one; any result
+ * produced from it is synthetic, and is labelled as such in the docs.
  *
  * Each simulated "session" is a distinct context (so it can be randomly
  * bucketed into either arm) that evaluates the flag once, then
  * probabilistically fires the clicked-upgrade conversion metric, at most once.
- * The conversion rates below are made up for demo purposes, deliberately
- * higher when the block is shown, to produce a readable effect — real traffic
- * would just be whatever it is.
- *
- * The earlier experiment on chat-tier-config (Free Tier vs Pro Tier) used a
- * previous version of this script; see git history and "Experiment result
- * and decision" in docs/ARCHITECTURE.md.
+ * The conversion rates below are made up for demo purposes, and higher when
+ * the block is shown, to produce a readable effect.
  *
  * Usage: npm run simulate:experiment [session count, default 4000]
  */

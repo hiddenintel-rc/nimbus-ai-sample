@@ -2,11 +2,11 @@
  * Generates synthetic chat traffic against the `nimbus-assistant` AI Config
  * so the prompt experiment on it (control: the current prompt, treatment:
  * the `structured-concise` variation) has enough sample size for
- * LaunchDarkly's results page to show a real readout. This app has no
- * production audience and the home lab has one GPU, so no model is called:
- * each session records made-up metrics on a real AI Config tracker, through
- * the same SDK calls /api/chat and /api/feedback make. Documented as
- * synthetic throughout, not an attempt to fabricate a conclusion.
+ * LaunchDarkly's results page to show a readout. This app has no production
+ * audience and its backend has one GPU, so no model is called: each session
+ * records made-up metrics on a real AI Config tracker, through the same SDK
+ * calls /api/chat and /api/feedback make. Any result produced from this
+ * traffic is synthetic, and is labelled as such in the docs.
  *
  * Per session, on the variation LaunchDarkly assigns:
  * - success, input/output tokens, time to first token and duration
@@ -15,9 +15,8 @@
  *   configuration samples, under the judge config's own metric key, so an
  *   arm without the judge attached gets no scores, as it would for real
  *
- * The rates below are made up, deliberately better for the treatment on
- * feedback and judge score and cheaper on output tokens, to produce a
- * readable effect. Real traffic would just be whatever it is.
+ * The rates below are made up: better for the treatment on feedback and
+ * judge score, and cheaper on output tokens, to produce a readable effect.
  *
  * Usage: npm run simulate:ai-experiment [session count, default 4000]
  */

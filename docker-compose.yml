@@ -8,8 +8,8 @@
 # The --env-file matters: Compose substitutes ${...} below from the shell or a
 # `.env` file, NOT from the `env_file:` key (which only sets container runtime
 # vars). Without it the client ID resolves to "" and gets baked into the browser
-# bundle empty, silently disabling client-side flags. The `:?` guard below turns
-# that into a startup error instead of a mystery.
+# bundle empty, silently disabling client-side flags. The `:?` guard below
+# stops the build with an error instead.
 
 services:
   nimbus:

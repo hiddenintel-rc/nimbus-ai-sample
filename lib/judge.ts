@@ -7,11 +7,12 @@ import {
   type Runner,
 } from '@launchdarkly/server-sdk-ai';
 import type { LDContext } from '@launchdarkly/node-server-sdk';
+import { numericTemperature } from '@/lib/ai-config';
 import { chatCompletion, type ChatMessage } from '@/lib/inference';
 
 const JUDGE_TIMEOUT_MS = 60_000;
 
-/** A judge that doesn't exist (yet) in LaunchDarkly is simply not run. */
+/** Returned for a judge key that doesn't exist in LaunchDarkly, which is then skipped. */
 const DISABLED_JUDGE: LDAIJudgeConfigDefault = { enabled: false };
 
 // The SDK's Judge asks its runner for structured output. This app's backend
@@ -84,9 +85,10 @@ function judgeRunner(model: string, instructions: ChatMessage[], temperature?: n
  * The judge config's model is not used. LaunchDarkly's judge form only lists
  * hosted providers, and this app calls none of them, so every judge runs on
  * the AI Config variation's own model, and only on replies that model wrote
- * (not on a model the user picked instead). The home lab keeps one model
- * loaded at a time, so this never unloads the model the user is chatting
+ * (not on a model the user picked instead). A single-GPU backend loads one
+ * model at a time, so judging never unloads the model the user is chatting
  * with, and every score comes from the same judge model.
+ *
  * `history` should be the user and assistant turns only: the judge rates the
  * reply for the user, and the system prompt is what differs between arms.
  */
@@ -112,13 +114,12 @@ export async function runJudges({
     try {
       const judgeConfig = await aiClient.judgeConfig(attached.key, context, DISABLED_JUDGE);
       if (!judgeConfig.enabled) continue;
-      const temperature = judgeConfig.model?.parameters?.temperature;
       const judge = new Judge(
         judgeConfig,
         judgeRunner(
           servedModel,
           judgeConfig.messages ?? [],
-          typeof temperature === 'number' ? temperature : undefined,
+          numericTemperature(judgeConfig.model?.parameters?.temperature),
         ),
         attached.samplingRate,
       );

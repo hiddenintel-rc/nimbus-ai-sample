@@ -1,7 +1,6 @@
 /**
- * Cloud mark + "Nimbus" wordmark, stacked. Uses currentColor so it follows
- * the same light/dark text color as everything else — renders white in the
- * app's default dark mode, but doesn't disappear if someone's in light mode.
+ * Cloud mark + "Nimbus" wordmark, stacked. Uses currentColor, so it follows
+ * the page's text color in both light and dark mode.
  */
 export default function Logo() {
   return (
