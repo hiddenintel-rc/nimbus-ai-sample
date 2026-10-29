@@ -3,8 +3,9 @@ import { getLDClient, buildUserContext } from '@/lib/ld-server';
 import { auth } from '@/lib/auth';
 
 /**
- * Fires the `clicked-upgrade` conversion metric used by the chat-tier-config
- * experiment. No real purchase happens here — this only records intent.
+ * Fires the `clicked-upgrade` event behind the `upgrade-interest` metric,
+ * which the show-plan-comparison experiment (and, earlier, the
+ * chat-tier-config one) measures. No real purchase happens here — this only records intent.
  * The metric itself (event key "clicked-upgrade") must exist in your own
  * LaunchDarkly environment — see "Re-create the LaunchDarkly flags" in the
  * README. Without it, this still runs fine; the event just won't be tied

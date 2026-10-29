@@ -4,7 +4,8 @@ import { useState } from 'react';
 
 /**
  * Shown only to free-tier accounts. Clicking it fires the `clicked-upgrade`
- * conversion metric used by the chat-tier-config experiment — there's no
+ * event behind the `upgrade-interest` metric, which the show-plan-comparison
+ * experiment measures — there's no
  * real checkout behind this, it only records intent.
  */
 export default function UpgradeCta() {

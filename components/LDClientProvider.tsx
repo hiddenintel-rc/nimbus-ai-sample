@@ -4,6 +4,10 @@ import { LDProvider } from 'launchdarkly-react-client-sdk';
 import type { LDContext } from 'launchdarkly-js-client-sdk';
 import type { ReactNode } from 'react';
 
+// Replace with your own environment's client-side ID (Project settings →
+// Environments → Client-side ID), set as NEXT_PUBLIC_LAUNCHDARKLY_CLIENT_ID in
+// .env.local. It is public by design, unlike the server SDK key, and is baked
+// into the browser bundle at build time, so rebuild after changing it.
 const clientSideID = process.env.NEXT_PUBLIC_LAUNCHDARKLY_CLIENT_ID;
 
 /**

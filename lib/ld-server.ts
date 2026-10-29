@@ -6,6 +6,10 @@ import { ldLogger } from '@/lib/ld-logger';
 let clientPromise: Promise<LDClient> | undefined;
 let aiClient: LDAIClient | undefined;
 
+// Replace with your own environment's server-side SDK key (LaunchDarkly →
+// Project settings → Environments → the environment you use → SDK key), set
+// as LAUNCHDARKLY_SDK_KEY in .env.local. Never commit it or expose it to the
+// browser.
 function getSdkKey(): string {
   const key = process.env.LAUNCHDARKLY_SDK_KEY;
   if (!key) {
