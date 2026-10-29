@@ -158,7 +158,9 @@ export async function* chatCompletion(
   const rawSources: unknown[] = [];
 
   for await (const chunk of stream) {
-    const delta = chunk.choices[0]?.delta as
+    // A web search opens with a chunk that is only `{ sources }`, with no
+    // `choices`, despite the OpenAI type saying it is always present.
+    const delta = chunk.choices?.[0]?.delta as
       | { content?: string | null; reasoning_content?: string | null; reasoning?: string | null }
       | undefined;
     const text = typeof delta?.content === 'string' ? delta.content : '';
