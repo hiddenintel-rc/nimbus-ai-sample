@@ -3,6 +3,7 @@ import BrandLogo from "@/components/BrandLogo";
 import ChatPanel from "@/components/ChatPanel";
 import LDUserSync from "@/components/LDUserSync";
 import MemoryStatusBadge from "@/components/MemoryStatusBadge";
+import PlanComparison from "@/components/PlanComparison";
 import { auth } from "@/lib/auth";
 import { logoutAction } from "@/lib/auth-actions";
 import { AI_CONFIG_KEY, DEFAULT_AI_CONFIG } from "@/lib/ai-config";
@@ -38,9 +39,27 @@ async function loadChatSettings(
   }
 }
 
+/**
+ * First-paint value of the "Compare plans" block for a logged-in user. Not
+ * evaluated for logged-out visitors: their key lives only in their browser.
+ */
+async function loadPlanComparison(
+  user: Parameters<typeof buildUserContext>[0],
+): Promise<boolean> {
+  try {
+    const client = await getLDClient();
+    return await client.variation("show-plan-comparison", buildUserContext(user), false);
+  } catch (error) {
+    console.error("[page] LaunchDarkly evaluation failed", error);
+    return false;
+  }
+}
+
 export default async function Home() {
   const session = await auth();
-  const chatSettings = session?.user ? await loadChatSettings(session.user) : undefined;
+  const [chatSettings, showPlanComparison] = session?.user
+    ? await Promise.all([loadChatSettings(session.user), loadPlanComparison(session.user)])
+    : [undefined, undefined];
 
   return (
     <div className="flex min-h-full flex-1 flex-col bg-zinc-50 font-sans dark:bg-black">
@@ -89,6 +108,8 @@ export default async function Home() {
             windows under the hood &mdash; chosen at runtime, not at deploy time.
           </p>
         </div>
+
+        <PlanComparison initialVisible={showPlanComparison} currentTier={session?.user?.tier} />
 
         <section
           id="chat"

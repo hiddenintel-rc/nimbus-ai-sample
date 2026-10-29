@@ -55,6 +55,11 @@ committing it by accident.
   it reverts live to the plain text wordmark, no reload. A second example of
   the release/remediate pattern, this time for a brand rollout instead of a
   product feature.
+- The "Compare plans" block between the headline and the chat is released
+  behind `show-plan-comparison`, and each account sees it for a different
+  reason: `demo-pro` by individual target, `demo-free` by a `tier` rule, and
+  logged-out visitors through a 20% percentage rollout, each browser
+  bucketed on its own key.
 
 If something doesn't work, jump to "Re-creating this independently" below —
 the same steps explain what each flag is doing, which is useful even if you
@@ -64,11 +69,14 @@ didn't set it up yourself.
 
 - A feature flag that can be released, toggled live with no page reload,
   and rolled back via a remote trigger
-- Rule-based and individual targeting on a real, server-built context.
-  Rules on the `tier` attribute decide which models, history window and
-  message allowance each plan gets (`chat-tier-config`). Individual targets
-  on the `demo-free` key switch image generation and memory off for that one
-  login (`enable-image-generation`, `enable-conversation-memory`)
+- Individual and rule-based targeting on one landing-page component: the
+  "Compare plans" block (`show-plan-comparison`) goes to one named account
+  by individual target, to free accounts by a rule on the `tier` attribute,
+  and to a percentage of logged-out visitors, each bucketed on its own key
+- Rules on that same server-built context decide which models, history
+  window and message allowance each plan gets (`chat-tier-config`), and
+  individual targets on the `demo-free` key switch image generation and
+  memory off for that one login
 - An experiment harness on that same flag — a conversion metric and a
   traffic simulator for generating sample data. No experiment is running
   today; see "Experiment + metric" for why the last one was stopped
@@ -331,7 +339,7 @@ Groq doesn't load models on demand.
 
 ### 3. Re-create the LaunchDarkly flags
 
-This app reads five flags and sends one custom event (there's also a
+This app reads six flags and sends one custom event (there's also a
 separate AI Config, covered in step 4). All of these need to exist in your
 own LD environment — they are not created automatically.
 
@@ -385,6 +393,38 @@ brand rollout instead of a product feature.
 **Try it:** with the flag on, the header shows the cloud icon above
 "Nimbus." Flip the flag **Off** in the dashboard and watch the same tab (no
 reload) — it reverts instantly to the plain text wordmark.
+
+#### `show-plan-comparison` — boolean
+
+Gates the landing page's "Compare plans" block, a new component going out
+to everyone who visits the page. It is the targeting example: individual
+targeting, a rule and a percentage rollout each release it to a different
+audience, the usual order for shipping a component carefully to a large
+audience.
+
+1. **Create flag** → Name: `Show Plan Comparison`, Key:
+   `show-plan-comparison` (must match exactly), Type: **Boolean**.
+2. Turn on **"Available on client-side SDKs"**. This one is required, not
+   just for live updates: logged-out visitors are only ever evaluated in the
+   browser, because their key is generated there.
+3. **Individual target:** on the Targeting tab, add an individual target
+   serving `true` to context key `demo-pro` — one named account that gets
+   the component before anyone else, to try it in production.
+4. **Rule:** add a custom rule — if `tier` is one of `free` → serve `true`.
+   Free accounts are who a plan comparison is for.
+5. **Default rule:** serve a **percentage rollout**, 20% `true` / 80%
+   `false`, bucketed by `key`. This reaches logged-out visitors (each
+   browser has its own generated key) and any account the target and rule
+   above didn't match.
+6. Toggle the flag **On**.
+
+**Try it:** log in as `demo-free` and `demo-pro` and the block is there,
+for two different reasons. The dashboard's flag evaluation (or the
+`Contexts` page) shows which: individual target for one, rule match for the
+other. Logged out, roughly one browser in five sees it. Delete the
+`ld:$anonUserId` entry from the site's localStorage and reload to become a
+new visitor with a new bucket. Raise the rollout to 100% and every open
+logged-out tab shows the block without a reload.
 
 #### `enable-web-search` — boolean
 

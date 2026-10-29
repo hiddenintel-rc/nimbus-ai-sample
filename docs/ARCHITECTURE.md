@@ -40,7 +40,7 @@ Three design constraints have shaped every decision below:
 | Feature | Status | Flag(s) |
 |---|---|---|
 | Release & remediate (toggle a feature live, roll it back via a trigger) | ✅ Done, tested | `enable-conversation-memory` |
-| Targeting (rules on `tier`, plus individual targets) | ✅ Done, tested — each account resolves to its own plan; two flags additionally gate the shared `demo-free` login | `chat-tier-config`, `enable-conversation-memory`, `enable-image-generation` |
+| Targeting (individual target, `tier` rule and percentage rollout on one component) | ✅ Built — the landing page's "Compare plans" block reaches `demo-pro` by individual target, free accounts by rule, and a share of logged-out visitors by rollout. `chat-tier-config` resolves each account to its own plan by rule, and two flags additionally gate the shared `demo-free` login | `show-plan-comparison`, `chat-tier-config`, `enable-conversation-memory`, `enable-image-generation` |
 | Experimentation (metric + experiment on the same flag) | ⏸️ Harness done and proven; iteration 2 stopped 2026-10-27 so the tiers could be made coherent. Result and decision recorded below | `chat-tier-config` + `upgrade-interest` metric (`clicked-upgrade` event) |
 | AI Configs (managed prompt, parameters and default model) | ✅ Done, tested | `nimbus-assistant` (AgentControl config, separate from the flags above) |
 | Model menu per tier (selectable + greyed-out upsell models) | ✅ Done, tested live for each tier, including refused requests for locked models | `chat-tier-config` + `nimbus-assistant` default |
@@ -53,8 +53,8 @@ Three design constraints have shaped every decision below:
 
 ## Architecture
 
-Four small diagrams, each answering one question, instead of one diagram
-that tries to show everything. Start with the big picture; the other three
+Five small diagrams, each answering one question, instead of one diagram
+that tries to show everything. Start with the big picture; the other four
 zoom into one flow each.
 
 **Legend** (used in every flowchart below):
@@ -252,7 +252,53 @@ the pending message, while the browser asks about the message not yet
 written, and splitting that logic is how the wall ends up a message apart on
 the two sides.
 
-### 4. Live changes without a redeploy — release and remediate
+### 4. How `show-plan-comparison` reaches each audience — targeting a component
+
+```mermaid
+flowchart TD
+    accTitle: show-plan-comparison evaluation
+    accDescr: The demo-pro key is individually targeted and sees the block. Otherwise a free tier matches the rule and sees it. Everyone else, including logged-out visitors with their own generated keys, reaches the default rule, a 20 percent rollout bucketed by key.
+
+    Ctx["Context<br/>logged-in account, or a logged-out<br/>visitor with a key generated in the browser"]:::nimbus
+    Ind{"Individual target?<br/>key demo-pro"}:::ld
+    Rule{"Rule<br/>tier is one of free"}:::ld
+    Def{"Default rule<br/>20% rollout by key"}:::ld
+
+    Show["true<br/>Compare plans shown"]:::variation
+    Hide["false<br/>block not rendered"]:::variation
+
+    Ctx --> Ind
+    Ind -->|yes| Show
+    Ind -->|no| Rule
+    Rule -->|yes| Show
+    Rule -->|no| Def
+    Def -->|"20% of keys"| Show
+    Def -->|"80% of keys"| Hide
+
+    classDef nimbus fill:#2563eb,stroke:#1e3a8a,color:#fff
+    classDef ld fill:#7c3aed,stroke:#4c1d95,color:#fff
+    classDef variation fill:none,stroke:#7c3aed,stroke-width:2px
+```
+
+This is the flag the targeting demo is built on, because it uses all three
+ways of choosing who gets a component, in the order a team would release
+one carefully: one named account first (`demo-pro`, by individual target),
+then the audience it is for (free accounts, by a rule on `tier`), then a
+measured share of everyone else (the default rule's percentage rollout).
+Each demo login shows a different evaluation reason for the same flag.
+
+The rollout is only meaningful because each logged-out browser is its own
+context. The client SDK generates and stores a key per browser (see the
+context note under "Flag and AI Config inventory"); with one shared key,
+every visitor would land in the same bucket and the 20% would be all or
+nothing.
+
+Logged-out visitors are evaluated only in the browser, since the server
+never sees their key. For a logged-in account the page evaluates the flag
+server-side for the first paint and the client SDK takes over from there,
+so the block appears or disappears live when targeting changes.
+
+### 5. Live changes without a redeploy — release and remediate
 
 ```mermaid
 sequenceDiagram
@@ -284,6 +330,7 @@ next chat reply reflects it, with no redeploy.
 | Piece | File(s) |
 |---|---|
 | Landing page, header, badges | `app/page.tsx`, `components/BrandLogo.tsx`, `components/MemoryStatusBadge.tsx` |
+| "Compare plans" block (targeting demo) | `components/PlanComparison.tsx`, first paint in `app/page.tsx` |
 | Chat UI, model menu | `components/ChatPanel.tsx` |
 | Tier config shape, validation, model choice | `lib/tier-config.ts` |
 | Client SDK setup + user identify | `components/LDClientProvider.tsx`, `components/LDUserSync.tsx`, `app/layout.tsx` |
@@ -540,7 +587,8 @@ the backend credentials are never published.
 |---|---|---|---|
 | `sanity-check` | boolean | yes | Early connectivity check only; removed from code once real flags landed. Safe to delete from the dashboard. |
 | `enable-conversation-memory` | boolean | yes (needs the live badge) | Release & remediate demo, and a paid-plan entitlement. Gates whether `/api/chat` forwards conversation history or treats every message as stateless. Has a Generic trigger wired to turn it off, for the remediation demo. Serves `true` by default, with `demo-free` served `false` so memory reads as a paid feature. The exclusion is currently an **individual target on the `demo-free` key**, so it gates that one account; a second free account would still get memory. Unlike the image-generation gate, which is per-account by intent, this one is described as a plan boundary — a `tier is one of free` rule would make it one. |
-| `new-logo` | boolean | yes (needs the live swap) | **Currently toggled Off**, so every account is served `false` and the header shows the plain text wordmark. Gates the redesigned cloud + wordmark logo (`components/Logo.tsx`) vs. the original plain text wordmark, via `components/BrandLogo.tsx`. A second, independent example of the release/remediate pattern — applied to a brand/visual rollout instead of a product feature, which is a genuinely common real-world use of flags. Defaults to the new logo if the flag is missing. |
+| `new-logo` | boolean | yes (needs the live swap) | On, serving `true` to every account (verified 2026-10-29). Gates the redesigned cloud + wordmark logo (`components/Logo.tsx`) vs. the original plain text wordmark, via `components/BrandLogo.tsx`. A second, independent example of the release/remediate pattern — applied to a brand/visual rollout instead of a product feature, which is a genuinely common real-world use of flags. Defaults to the new logo if the flag is missing. |
+| `show-plan-comparison` | boolean | yes (required: logged-out visitors are evaluated only in the browser) | The targeting demo. Gates the landing page's "Compare plans" block (`components/PlanComparison.tsx`). Individual target `demo-pro` → `true`; rule `tier is one of free` → `true`; default rule a 20% / 80% percentage rollout by `key`, which is what reaches logged-out visitors. Off by default if the flag is missing, as for any unreleased component. The plan copy in the block is marketing text, not entitlements — `chat-tier-config` and the feature flags decide those per request. |
 | `enable-web-search` | boolean | yes (shows/hides the toggle live) | Pure kill switch — no rules, no targets, so Off removes it for every account at once. `/api/chat` only adds Open WebUI's `features.web_search` when this flag is on for the context, the user's toggle asked for it, and the provider is local — the browser can request search but never force it. Serves `true` to all three accounts (verified); a `tier` rule would make it an entitlement in a live product, but it is deliberately not one here. |
 | `enable-image-generation` | boolean | yes (shows/hides the toggle live) | Kill switch for image generation, and a paid-plan entitlement. When the flag is on, the user's toggle is on, and the provider is local, `/api/chat` sends that turn's prompt to Open WebUI `POST /api/v1/images/generations` instead of the chat model. The returned file is fetched server-side and shown in the thread. Serves `true` by default, with an individual target on the `demo-free` key serving `false`. That is deliberately per-account rather than a `tier` rule: image generation is the most expensive thing the single GPU can be asked to do, and `demo-free` is the login that gets shared most widely. Editing a previous image is not wired yet. |
 | `chat-tier-config` | JSON (4 variations; three in use: `free` / `pro` / `enterprise`) | yes (the model menu and the message allowance update live; the server re-checks every request) | Targeting demo, and the carrier for every per-plan limit. Each variation is `{ label, maxContextMessages, maxMessagesPerConversation?, defaultModel, models, lockedModels }`: Free selects the 4B; Pro the 4B and the 4B long-context; Enterprise those plus Coder-30B and Qwen 3.8-27B. `lockedModels` are shown disabled with the plan that unlocks them and are never accepted by `/api/chat`. Malformed or older single-model values fall back safely (`normalizeTierConfig`). Optional `maxMessagesPerConversation` is the plan's hard message allowance (see "Two limits that are easy to confuse"); omitting it means unlimited, which is what Pro and Enterprise do. Rule-based on the context's `tier` attribute, with no individual targets as of 2026-10-27; the Default rule serves Free Tier and is the slot an experiment attaches to. A fourth variation, `Enterprise Tier - No 27B`, exists in the environment but is served by nothing. |
