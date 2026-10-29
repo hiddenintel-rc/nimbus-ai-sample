@@ -548,8 +548,12 @@ the backend credentials are never published.
 Context sent to LaunchDarkly: `{ kind: "user", key: <demo account id>, email,
 tier, accountAgeDays }`, built in `lib/ld-server.ts#buildUserContext` from the
 NextAuth session — never from client input. The browser's client SDK is given
-the same server-built context (anonymous when logged out), so live badges
-evaluate for the same user the server does. Only `key` and `tier` are matched
+the same server-built context, so live badges evaluate for the same user the
+server does. Logged-out visitors are an anonymous context with no key of its
+own: the client SDK generates a random key per browser and keeps it in
+localStorage, so each visitor is a separate context and a percentage rollout
+on the landing page splits them instead of bucketing everyone together. With
+storage blocked, the SDK generates a fresh key on every page load. Only `key` and `tier` are matched
 on today: `accountAgeDays` is sent so a second attribute is there to target
 on, but no rule uses it. It is kept as a ready-made extension — a loyalty
 rule such as `accountAgeDays` ≥ 365 → Pro Tier, which would promote
@@ -581,9 +585,16 @@ differ only in whether the account can see what its plan excludes, so the
 Upgrade button stays honest in both. Note both arms would carry
 `label: "Free"`, which `scripts/simulate-experiment.ts` uses to pick its
 synthetic conversion rate; it would need to bucket on
-`variationDetail().variationIndex` instead. Primary metric: `upgrade-interest`, built on the `clicked-upgrade` event (Count/average-per-user,
-which behaves like a conversion rate here since the UI's upgrade button only
-fires it once per account). `scripts/simulate-experiment.ts` generates
+`variationDetail().variationIndex` instead. Primary metric: `upgrade-interest`, built on the `clicked-upgrade` event (Count/average-per-user).
+That is not a conversion rate for real users. Each Upgrade button fires once
+and then shows a thank-you note, but the state lives in the component: a
+reload brings the button back, and reaching the message wall shows a second,
+fresh one. One account can therefore send the event several times, and a
+count metric weighs a repeat clicker above someone who clicked once.
+Iteration 1's readout is unaffected, because the simulator sends at most one
+event per context. Before running an experiment on real traffic, switch the
+metric to measure **occurrence** (did the context click at all) rather than
+count. `scripts/simulate-experiment.ts` generates
 synthetic free-tier sessions against it — real LD exposures and events, but
 documented as synthetic data since the app has no production audience.
 

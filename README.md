@@ -64,8 +64,11 @@ didn't set it up yourself.
 
 - A feature flag that can be released, toggled live with no page reload,
   and rolled back via a remote trigger
-- Rule-based targeting on a real, server-built context driving which models,
-  history window and paid features an account gets
+- Rule-based and individual targeting on a real, server-built context.
+  Rules on the `tier` attribute decide which models, history window and
+  message allowance each plan gets (`chat-tier-config`). Individual targets
+  on the `demo-free` key switch image generation and memory off for that one
+  login (`enable-image-generation`, `enable-conversation-memory`)
 - An experiment harness on that same flag — a conversion metric and a
   traffic simulator for generating sample data. No experiment is running
   today; see "Experiment + metric" for why the last one was stopped
@@ -96,6 +99,43 @@ Both point at the same LaunchDarkly environment, so a flag flipped in the
 dashboard changes both at once. Not yet built: third-party integrations. See
 `docs/ARCHITECTURE.md` for the full status and the reasoning behind what's
 here.
+
+## Assumptions about your environment
+
+The setup instructions below assume the following. Where one doesn't hold
+for you, the note says what changes.
+
+- **Node.js 20 or newer and npm.** Built and tested on Node 22.
+- **Your own LaunchDarkly account**, with one project and environment. A
+  free trial is enough. The flags, AI Config and metric are **not** created
+  by the app: you create them by hand with the exact keys given below, and
+  each flag the browser reads needs "Available on client-side SDKs" turned on.
+- **An OpenAI-compatible chat backend you control.** The model IDs in this
+  repo's flag variations belong to one self-hosted setup: Open WebUI in front
+  of a llama.cpp router. On any other backend, replace them with model IDs
+  that exist there.
+  - **Groq** is the no-infrastructure alternative. Its code path is
+    implemented and type-checked but has not been run end to end, so treat
+    it as the least-proven route.
+  - **Web search and image generation need Open WebUI specifically**, with
+    Tavily and ComfyUI configured in it. On any other backend those toggles
+    appear but do nothing.
+- **Outbound HTTPS to `*.launchdarkly.com`** from the server (flag stream,
+  events) and from each visitor's browser (the client SDK connects directly).
+- **Local development is served at `http://localhost:3000` with no proxy in
+  front.** Behind a reverse proxy or tunnel, set `AUTH_TRUST_HOST=true`.
+- **The Docker path assumes Open WebUI runs in Docker on the same host**, so
+  the app can join its network, and that you publish the app through
+  something like a Cloudflare Tunnel. Vercel works for everything except
+  chat against a backend behind Cloudflare's bot protection.
+- **A single-GPU backend loads one model at a time.** The first reply after
+  switching models waits for a load, from a few seconds to about 30.
+- **No database.** Three fixed demo accounts share one password
+  (`DEMO_PASSWORD`). Nothing is persisted, so the free plan's message
+  allowance is per conversation and resets on reload.
+- **Browsers allow localStorage.** Logged-out visitors get a random
+  LaunchDarkly key saved there. Where storage is blocked, the visitor gets a
+  new key, and so a new context, on every page load.
 
 ## Scripts
 

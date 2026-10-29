@@ -6,10 +6,16 @@ import type { ReactNode } from 'react';
 
 const clientSideID = process.env.NEXT_PUBLIC_LAUNCHDARKLY_CLIENT_ID;
 
-/** Used for logged-out visitors, who have no demo account to identify as. */
+/**
+ * Used for logged-out visitors, who have no demo account to identify as.
+ * Deliberately has no `key`: the client SDK then generates a random one and
+ * keeps it in localStorage, so each browser is its own context and keeps it
+ * across visits. A fixed key would make every visitor the same context, and
+ * a percentage rollout or experiment on the landing page would put all of
+ * them in the same bucket.
+ */
 export const anonymousContext: LDContext = {
   kind: 'user',
-  key: 'anonymous-visitor',
   anonymous: true,
 };
 
