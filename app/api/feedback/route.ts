@@ -6,11 +6,12 @@ import { buildUserContext, getAiClient, getLDClient } from '@/lib/ld-server';
 
 /**
  * Records a 👍 / 👎 on one assistant reply as AI Config feedback
- * (`$ld:ai:feedback:user:positive` / `negative`), the primary metric of the
- * prompt experiment on `nimbus-assistant`. The reply's signed resumption
- * token rebuilds the tracker of the run that wrote it, so the feedback is
- * credited to that run's variation. The context still comes from the
- * session, never from the token or the request.
+ * (`$ld:ai:feedback:user:positive` / `negative`). The reply's signed
+ * resumption token rebuilds the tracker of the run that wrote it, so the
+ * feedback is credited to that run's AI Config and variation. The event
+ * itself carries no model name, so feedback is per model only where the
+ * model has its own config (see aiConfigForModel). The context still comes
+ * from the session, never from the token or the request.
  */
 export async function POST(request: Request) {
   const session = await auth();

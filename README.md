@@ -437,7 +437,9 @@ history it gets, and how many messages it may send in one conversation.
    selectable entries (each `id` is a model ID on your backend — adjust them
    if you're on Groq, see above); `lockedModels` are shown disabled with the
    plan that unlocks them; `slow: true` marks a model the backend has to
-   load first, so the chat says so instead of just "Thinking…":
+   load first, so the chat says so instead of just "Thinking…". A model
+   entry may also carry `aiConfigKey`, naming its own AI Config (see "One
+   AI Config per model" in step 4):
 
    ```json
    // "Free Tier"
@@ -565,7 +567,7 @@ The full readout, and an earlier experiment on `chat-tier-config`, are in
 
 AI Configs are a separate part of LaunchDarkly from the flags above, under
 **Agents → Configs** in the left sidebar. It controls the assistant's prompt and temperature for
-every account, and its model is the default selection in the model menu —
+every model without a config of its own, and its model is the default selection in the model menu —
 but only for tiers whose `chat-tier-config` allows that model. A user's own
 pick from the menu wins.
 
@@ -598,6 +600,36 @@ locked, so stop the experiment first to try this. To change the model the same w
 `demo-enterprise`, leave the model menu untouched, and switch the config's
 model to `Qwen3.8-27B-UD-Q3_K_XL`: the next reply's caption shows Qwen 3.8.
 Free and Pro keep the 4B, because their tier doesn't allow that model.
+
+#### One AI Config per model (optional)
+
+Without this, every model shares `nimbus-assistant`: a 👍 on a Coder 30B
+reply, and its tokens, are credited to `nimbus-assistant` and its 4B model.
+Feedback events name the AI Config and variation, not the model, so a
+model's feedback is only separable once the model has a config of its own.
+That config's **Monitoring** tab then shows the model's feedback, tokens,
+latency and judge scores, and its prompt can be tuned or experimented on
+without touching the other models.
+
+1. **Create config** → **Completion** mode, one per model, e.g. Key
+   `nimbus-assistant-coder-30b`. Its **Model ID** must be exactly that
+   model's `id` in `chat-tier-config`. Give it its own system message and
+   temperature, set the default rule to serve the variation, and toggle it
+   **On**. Judges are optional: a judge runs on the config's own model, so
+   judging a large model holds the GPU longer.
+2. In `chat-tier-config`, add `"aiConfigKey": "nimbus-assistant-coder-30b"`
+   to that model's entry in **every** variation that lists it under
+   `models`.
+
+A model with no `aiConfigKey`, or whose config is off or missing, keeps
+using `nimbus-assistant`, so the order of the two steps doesn't matter. If a
+config's Model ID doesn't match the model that answered, the server logs a
+warning: its events would be credited to the wrong model, and its judges
+are skipped.
+
+**Try it:** as `demo-enterprise`, pick Coder 30B, send a message and rate
+the reply. The rating appears on the new config's **Monitoring** tab, not
+on `nimbus-assistant`'s.
 
 #### Prompt experiment, scored by feedback and a judge (optional)
 

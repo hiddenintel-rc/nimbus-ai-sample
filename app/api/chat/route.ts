@@ -16,7 +16,12 @@ import {
   overMessageLimit,
   resolveModel,
 } from '@/lib/tier-config';
-import { AI_CONFIG_KEY, DEFAULT_AI_CONFIG, numericTemperature } from '@/lib/ai-config';
+import {
+  AI_CONFIG_KEY,
+  aiConfigForModel,
+  DEFAULT_AI_CONFIG,
+  numericTemperature,
+} from '@/lib/ai-config';
 import { UNREACHABLE_MESSAGE, type ServedBy } from '@/lib/chat-stream';
 import { signFeedbackToken } from '@/lib/feedback-token';
 import { runJudges } from '@/lib/judge';
@@ -219,19 +224,21 @@ export async function POST(request: Request) {
     );
   }
 
-  // The AI Config supplies the prompt and temperature for every
-  // account, and its model becomes the default pick — but only when this
-  // tier's chat-tier-config allows that model. The user's own pick from the
-  // model menu wins, and is likewise ignored unless the tier allows it.
-  // Must exist in your own LD environment — see "Create the AI Config" in
-  // the README.
+  // The shared AI Config's model becomes the default pick — but only when
+  // this tier's chat-tier-config allows that model. The user's own pick from
+  // the model menu wins, and is likewise ignored unless the tier allows it.
+  // The model that answers then takes its prompt, temperature and tracker
+  // from its own AI Config when it has one, so its feedback is credited to
+  // it. Must exist in your own LD environment — see "Create the AI Config"
+  // in the README.
   const aiClient = await getAiClient();
-  const aiConfig = await aiClient.completionConfig(AI_CONFIG_KEY, context, DEFAULT_AI_CONFIG);
+  const sharedConfig = await aiClient.completionConfig(AI_CONFIG_KEY, context, DEFAULT_AI_CONFIG);
   const model = resolveModel(
     tierConfig,
     body?.model,
-    aiConfig.enabled ? aiConfig.model?.name : undefined,
+    sharedConfig.enabled ? sharedConfig.model?.name : undefined,
   );
+  const aiConfig = await aiConfigForModel(aiClient, model, context, sharedConfig);
 
   // With memory off, only the latest message is sent, so every turn is
   // answered as a new conversation. With memory on, the tier config's context

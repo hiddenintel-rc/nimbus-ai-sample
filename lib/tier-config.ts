@@ -4,6 +4,13 @@ export type TierModel = {
   label: string;
   /** Takes longer to load (a larger model or a separate context size), so the menu labels it. */
   slow?: boolean;
+  /**
+   * Key of this model's own AI Config, which supplies its prompt and
+   * temperature and receives its tokens, feedback and judge scores. Without
+   * one, or while that config is disabled, the model uses the shared
+   * `nimbus-assistant` config (see aiConfigForModel).
+   */
+  aiConfigKey?: string;
 };
 
 export type LockedModel = {
@@ -81,6 +88,7 @@ export function normalizeTierConfig(raw: unknown): TierConfig {
                 id: entry.id,
                 label: nonEmptyString(entry.label) ? entry.label : entry.id,
                 ...(entry.slow === true ? { slow: true } : {}),
+                ...(nonEmptyString(entry.aiConfigKey) ? { aiConfigKey: entry.aiConfigKey.trim() } : {}),
               },
             ]
           : [],

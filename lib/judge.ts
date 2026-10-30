@@ -84,10 +84,12 @@ function judgeRunner(model: string, instructions: ChatMessage[], temperature?: n
  *
  * The judge config's model is not used. LaunchDarkly's judge form only lists
  * hosted providers, and this app calls none of them, so every judge runs on
- * the AI Config variation's own model, and only on replies that model wrote
- * (not on a model the user picked instead). A single-GPU backend loads one
- * model at a time, so judging never unloads the model the user is chatting
- * with, and every score comes from the same judge model.
+ * the AI Config variation's own model, and only on replies that model wrote.
+ * A model with its own AI Config is therefore judged by itself, and a model
+ * that falls back to the shared config is not judged. A single-GPU backend
+ * loads one model at a time, so judging never unloads the model the user is
+ * chatting with. Scores are comparable between variations of one config, not
+ * between models.
  *
  * `history` should be the user and assistant turns only: the judge rates the
  * reply for the user, and the system prompt is what differs between arms.

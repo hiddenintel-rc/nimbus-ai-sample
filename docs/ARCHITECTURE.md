@@ -140,9 +140,13 @@ sequenceDiagram
     R->>SDK: nimbus-assistant AI Config?
     SDK-->>R: system prompt · temperature · default model
     R->>R: Pick the model<br/>user's pick → AI Config model → tier default<br/>(each only if the tier allows it)
+    opt The tier flag names the model's own AI Config
+        R->>SDK: That model's AI Config?
+        SDK-->>R: its prompt · temperature<br/>(nimbus-assistant's if it is off or missing)
+    end
     R->>R: Trim history<br/>memory off → last message only<br/>memory on → last N for this tier
     R-->>B: SSE meta<br/>served-by model and plan, before the model replies
-    R->>M: Streaming chat completion<br/>(picked model, AI Config prompt)
+    R->>M: Streaming chat completion<br/>(picked model, its AI Config's prompt)
     opt Search flag on and the user's toggle on
         M->>M: Tavily search,<br/>results added to the context
     end
@@ -328,7 +332,7 @@ the config, its variations are locked and can't be edited.
 | Landing page, header, badges | `app/page.tsx`, `components/BrandLogo.tsx`, `components/MemoryStatusBadge.tsx` |
 | "Compare plans" block (targeting demo) | `components/PlanComparison.tsx`, first paint in `app/page.tsx` |
 | Chat UI, model menu | `components/ChatPanel.tsx` |
-| Tier config shape, validation, model choice | `lib/tier-config.ts` |
+| Tier config shape, validation, model choice | `lib/tier-config.ts` (which AI Config a model uses: `lib/ai-config.ts`) |
 | Client SDK setup + user identify | `components/LDClientProvider.tsx`, `components/LDUserSync.tsx`, `app/layout.tsx` |
 | Login (3 static demo accounts) | `app/login/page.tsx`, `lib/auth.ts`, `lib/demo-users.ts` |
 | Chat request handling | `app/api/chat/route.ts` |
@@ -463,7 +467,12 @@ can't conflict because `resolveModel` in `lib/tier-config.ts` applies a
 fixed order: the user's menu pick, then the AI Config's model, then the
 tier's `defaultModel`, each used only if it is in the tier's `models` list.
 Changing the AI Config's model to Qwen 3.8 therefore moves Enterprise's
-default without a redeploy, while Free and Pro keep the 4B. The AI Config
+default without a redeploy, while Free and Pro keep the 4B. A model entry in
+`chat-tier-config` can also name its own AI Config (`aiConfigKey`); that
+model then takes its prompt, temperature and tracker from that config, so its
+feedback and judge scores are reported per model, while `nimbus-assistant`
+still picks the default. Which configs exist is a dashboard change, not a
+deploy (`aiConfigForModel` in `lib/ai-config.ts`). The AI Config
 serves configuration only, the way a flag serves a value; it hosts no model,
 and the inference call and its credentials stay in `lib/inference.ts`.
 
@@ -492,8 +501,8 @@ model backend.
 | `show-plan-comparison` | boolean | yes (required: logged-out visitors are evaluated only in the browser) | The targeting example. Gates the landing page's "Compare plans" block (`components/PlanComparison.tsx`). Individual target `demo-pro` → `true`; rule `tier is one of free` → `true`; default rule a 20% / 80% rollout by `key`, which is what reaches logged-out visitors. Off if the flag is missing. The block's plan copy is marketing text; `chat-tier-config` and the feature flags decide entitlements per request. |
 | `enable-web-search` | boolean | yes (shows/hides the toggle) | Kill switch with no rules or targets, so Off removes search for every account at once. `/api/chat` adds Open WebUI's `features.web_search` only when the flag is on for the context, the user's toggle asked for it, and the provider is local, so the browser can request search but never force it. |
 | `enable-image-generation` | boolean | yes (shows/hides the toggle) | Kill switch for image generation. When the flag and the user's toggle are on and the provider is local, `/api/chat` sends that turn's prompt to Open WebUI's `POST /api/v1/images/generations` instead of the chat model, fetches the stored file server-side and shows it in the thread. Serves `true` by default, with an individual target on `demo-free` serving `false`: per account by design, to keep the GPU's most expensive operation away from the most widely shared login, not a plan feature. |
-| `chat-tier-config` | JSON (4 variations; three in use) | yes (the model menu and message allowance update live; the server re-checks every request) | Every per-plan limit. Each variation is `{ label, maxContextMessages, maxMessagesPerConversation?, defaultModel, models, lockedModels }`: Free selects the 4B; Pro the 4B and the long-context 4B; Enterprise those plus Coder-30B and Qwen 3.8-27B. `lockedModels` are shown disabled with the plan that unlocks them and are never accepted by `/api/chat`. Malformed values fall back field by field (`normalizeTierConfig`), and a variation without a usable `models` list falls back to the Free config. Rules on `tier` serve Pro and Enterprise; the default rule serves Free; no individual targets. A fourth variation, `Enterprise Tier - No 27B`, is served by nothing. |
-| `nimbus-assistant` | AI Config (completion) | n/a (server only) | The assistant's system prompt, temperature and default model, and the prompt experiment's two variations. |
+| `chat-tier-config` | JSON (4 variations; three in use) | yes (the model menu and message allowance update live; the server re-checks every request) | Every per-plan limit. Each variation is `{ label, maxContextMessages, maxMessagesPerConversation?, defaultModel, models, lockedModels }`, and each `models` entry `{ id, label, slow?, aiConfigKey? }`: Free selects the 4B; Pro the 4B and the long-context 4B; Enterprise those plus Coder-30B and Qwen 3.8-27B. `lockedModels` are shown disabled with the plan that unlocks them and are never accepted by `/api/chat`. Malformed values fall back field by field (`normalizeTierConfig`), and a variation without a usable `models` list falls back to the Free config. Rules on `tier` serve Pro and Enterprise; the default rule serves Free; no individual targets. A fourth variation, `Enterprise Tier - No 27B`, is served by nothing. |
+| `nimbus-assistant` | AI Config (completion) | n/a (server only) | The assistant's system prompt, temperature and default model for every model without an `aiConfigKey`, and the prompt experiment's two variations. |
 | `nimbus-judge-helpfulness` | AI Config (judge) | n/a (server only) | The helpfulness rubric attached to both `nimbus-assistant` variations at a 10% sampling rate. |
 
 Context sent to LaunchDarkly: `{ kind: "user", key: <demo account id>, email,
@@ -620,7 +629,8 @@ Three decisions behind it:
   system prompt is the thing that differs between arms.
 - **The judge never forces a model swap.** It runs on the variation's own
   model, and only when that model wrote the reply (not a model the user
-  picked instead), after the reply is delivered, on the
+  picked instead; a model with its own AI Config is judged by that config's
+  judges, on itself), after the reply is delivered, on the
   variation's sampling rate (10% here). The backend loads one model at a
   time, so judging a Coder-30B reply on the 4B would unload the model the
   user is mid-conversation with. It also keeps every score from one judge
@@ -698,10 +708,18 @@ Two setup mistakes were found and fixed on the way:
 - **Groq path is implemented but untested.** It type-checks and follows the
   same interface as the local path, but no live request has gone through it,
   and the flag's model IDs would need swapping for Groq ones (see the README).
-- **AI metrics are attributed to the AI Config's model.** When a user picks
-  a different model from the menu, its token usage is still reported under
-  `nimbus-assistant`'s variation. In the prompt experiment this affects both
-  arms equally, since assignment is random, but it widens the token spread.
+- **Models without their own AI Config share `nimbus-assistant`'s
+  metrics.** Their tokens and feedback are reported under its variation and
+  its model, because feedback events name the config and variation, not the
+  model. Giving a model an `aiConfigKey` fixes this for that model.
+- **A prompt experiment on one config counts everyone who opens the chat.**
+  The page evaluates `nimbus-assistant` for the default model, so a user
+  chatting on a model with its own config is still exposed to an experiment
+  on `nimbus-assistant` while their feedback goes to the other config. Both
+  arms are diluted alike, since assignment is random.
+- **Judge scores compare variations, not models.** Each config's judges run
+  on that config's own model, so a 4B score and a Coder 30B score come from
+  different judges.
 - **Feedback is one per reply in the UI, not on the server.** The buttons
   lock after one rating, but a signed token can be posted again by hand, and
   each post records again. Making a rating single-use needs storage for spent
