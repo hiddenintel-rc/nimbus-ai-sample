@@ -33,8 +33,8 @@ Three constraints shaped the decisions below:
 | Release & remediate (toggle a feature live, roll it back via a trigger) | ✅ Done, tested | `enable-conversation-memory` |
 | Targeting (individual target, `tier` rule and percentage rollout on one component) | ✅ Built — the landing page's "Compare plans" block reaches `demo-pro` by individual target, free accounts by rule, and a share of logged-out visitors by rollout. `chat-tier-config` resolves each account to its own plan by rule, and two flags additionally gate the shared `demo-free` login | `show-plan-comparison`, `chat-tier-config`, `enable-conversation-memory`, `enable-image-generation` |
 | Experimentation (metric + experiment on the targeting flag) | ✅ Concluded 2026-10-29 on `show-plan-comparison`'s free-tier rule: showing Compare plans raised upgrade interest by +72.48% (95% CI +30.41% to +114.54%) on synthetic traffic; `true` shipped. The earlier `chat-tier-config` experiment's result and decision are recorded below too | `show-plan-comparison` + `upgrade-interest` metric (`clicked-upgrade` event) |
-| AI Configs (managed prompt, parameters and default model) | ✅ Done, tested | `nimbus-assistant` (AI Config, separate from the flags above) |
-| AI Config experiment (prompt variants; 👍 / 👎, LLM judge, token and latency on Monitoring) | ⏳ Running (Iteration 3) on `nimbus-assistant`'s default rule, current prompt vs `structured-concise`, 50/50; per-reply feedback through signed resumption tokens, a judge at 10% on both arms. On synthetic traffic the judge reads +11.76% (significant) and the primary, 👍 count, +10.31% (not yet significant): not shipped, kept running. Readout below | `nimbus-assistant` + `nimbus-judge-helpfulness` (judge mode) |
+| AI Configs (managed prompt, parameters and default model; one config per model) | ✅ Done. `nimbus-assistant` is the shared config and picks the default model; the long-context 4B, Coder-30B and Qwen 3.8-27B name their own configs with `aiConfigKey`, so each model's feedback, tokens and judge scores are tracked on its own config. Per-model routing verified on the live site (no fallback or model mismatch logged); no per-model data in LaunchDarkly yet, because the account's AI runs allowance was used up first (see "Known gaps") | `nimbus-assistant` + one completion config per model (inventory below) |
+| AI Config experiment (prompt variants; 👍 / 👎, LLM judge, token and latency on Monitoring) | ✅ Stopped 2026-10-29 after Iteration 3, not shipped. Current prompt vs `structured-concise` on `nimbus-assistant`'s default rule, 50/50; per-reply feedback through signed resumption tokens, a judge at 10% on both arms. On synthetic traffic the judge read +11.76% (significant) and the primary, 👍 count, +10.31% (not significant). The current prompt serves everyone; the judge stays attached as ongoing monitoring. Readout below | `nimbus-assistant` + `nimbus-judge-helpfulness` (judge mode) |
 | Model menu per tier (selectable + greyed-out upsell models) | ✅ Done, tested live for each tier, including refused requests for locked models | `chat-tier-config` + `nimbus-assistant` default |
 | Web search (Open WebUI + Tavily), all tiers | ✅ Done, tested | `enable-web-search` |
 | Image generation | ✅ Done. The prompt goes to Open WebUI's image API, about 50 s per image. On for every account except `demo-free`, individually gated off to keep the GPU's most expensive operation away from the most widely shared login | `enable-image-generation` |
@@ -678,6 +678,15 @@ traffic, positive *share* of rated replies (the Monitoring tab's
 satisfaction rating) would be a sharper primary than 👍 per exposed user,
 because it removes the noise of who chooses to rate.
 
+**Then: stopped without shipping (2026-10-29).** More synthetic traffic
+would have spent the account's monthly AI runs allowance (see "Known
+gaps"), so the iteration was stopped rather than extended, serving the
+current prompt to everyone. That is the same decision the readout reached,
+"don't ship yet", made final: `structured-concise` stays a saved variation,
+and the judge stays attached at 10% as ongoing quality monitoring. A new
+iteration on real traffic, decided on satisfaction rating, is how the
+question would be reopened.
+
 Two setup mistakes were found and fixed on the way:
 
 - **Iteration 1** was stopped before any data: the judge appeared attached
@@ -720,6 +729,13 @@ Two setup mistakes were found and fixed on the way:
   chatting on a model with its own config is still exposed to an experiment
   on `nimbus-assistant` while their feedback goes to the other config. Both
   arms are diluted alike, since assignment is random.
+- **AI telemetry stops when the plan's AI runs allowance is used up.**
+  LaunchDarkly meters AI Config runs per month, and both simulators' AI
+  sessions count. Past the allowance, new `$ld:ai:` events (feedback,
+  tokens, judge scores, config lookups) are not recorded until it resets,
+  while flags and AI Configs keep serving normally. This account reached it
+  on 2026-10-29, so per-model data and live feedback since then are not on
+  Monitoring.
 - **Judge scores compare variations, not models.** Each config's judges run
   on that config's own model, so a 4B score and a Coder 30B score come from
   different judges.

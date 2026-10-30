@@ -50,7 +50,8 @@ committing it by accident.
   target, `demo-free` by a `tier` rule, and 20% of logged-out visitors by
   percentage rollout.
 - **AI Config:** the assistant's prompt and temperature come from
-  `nimbus-assistant`; edit the prompt and the next reply follows it.
+  `nimbus-assistant`, or from the picked model's own config for the larger
+  models; edit a prompt and the next reply follows it.
 - **Experiments:** the free plan's "Upgrade to Pro" button and the 👍 / 👎
   under each reply feed the two experiments described below.
 
@@ -83,7 +84,8 @@ does and how to try it, which helps even if you didn't set it up yourself.
   greyed out, and the server rejects any model the tier doesn't allow
 - A LaunchDarkly AI Config managing the assistant's prompt, temperature and
   default model (within what the tier allows), all live-editable with no
-  redeploy
+  redeploy, plus one AI Config per larger model, so each model's prompt is
+  tuned and its feedback tracked on its own
 - A flag-gated "Generate an image" toggle. When it's on, that turn's prompt
   is sent to Open WebUI's image API instead of the chat model, and the
   picture is shown in the thread
@@ -139,7 +141,7 @@ for you, the note says what changes.
 | `npm run dev` | Start the app locally |
 | `npm run build` | Production build (also type-checks) |
 | `npm run simulate:experiment [count]` | Generate synthetic free-tier traffic against the Compare plans experiment (default 4,000 sessions) |
-| `npm run simulate:ai-experiment [count]` | Generate synthetic chat metrics against the AI Config prompt experiment (default 4,000 sessions) |
+| `npm run simulate:ai-experiment [count]` | Generate synthetic chat metrics against the AI Config prompt experiment (default 4,000 sessions). Each session counts toward the LaunchDarkly plan's monthly AI runs allowance |
 
 ---
 
@@ -464,7 +466,7 @@ history it gets, and how many messages it may send in one conversation.
      "defaultModel": "Qwen3.5-4B",
      "models": [
        { "id": "Qwen3.5-4B", "label": "Qwen 4B" },
-       { "id": "Qwen3.5-4B-128k", "label": "Qwen 4B · long context", "slow": true }
+       { "id": "Qwen3.5-4B-128k", "label": "Qwen 4B · long context", "slow": true, "aiConfigKey": "nimbus-assistant-4b-128k" }
      ],
      "lockedModels": [
        { "id": "Qwen3-Coder-30B-A3B-Instruct-UD-Q4_K_XL", "label": "Qwen Coder 30B", "requiredTier": "Enterprise" },
@@ -480,15 +482,17 @@ history it gets, and how many messages it may send in one conversation.
      "defaultModel": "Qwen3.5-4B",
      "models": [
        { "id": "Qwen3.5-4B", "label": "Qwen 4B" },
-       { "id": "Qwen3.5-4B-128k", "label": "Qwen 4B · long context", "slow": true },
-       { "id": "Qwen3-Coder-30B-A3B-Instruct-UD-Q4_K_XL", "label": "Qwen Coder 30B", "slow": true },
-       { "id": "Qwen3.8-27B-UD-Q3_K_XL", "label": "Qwen 3.8 27B", "slow": true }
+       { "id": "Qwen3.5-4B-128k", "label": "Qwen 4B · long context", "slow": true, "aiConfigKey": "nimbus-assistant-4b-128k" },
+       { "id": "Qwen3-Coder-30B-A3B-Instruct-UD-Q4_K_XL", "label": "Qwen Coder 30B", "slow": true, "aiConfigKey": "qwen3-coder-30b-a3b-instruct-ud-q4-k-xl" },
+       { "id": "Qwen3.8-27B-UD-Q3_K_XL", "label": "Qwen 3.8 27B", "slow": true, "aiConfigKey": "qwen3.8-27b-ud-q3-k-xl" }
      ],
      "lockedModels": []
    }
    ```
 
    `requiredTier` is the plan name shown beside a locked model.
+   `aiConfigKey` is optional: until those AI Configs exist (step 4), the
+   models it names fall back to `nimbus-assistant`.
 3. On the **Targeting** tab, add two custom rules (order between them
    doesn't matter, since `tier` only ever holds one value):
    - If `tier` is one of `pro` → serve **Pro Tier**
@@ -496,8 +500,6 @@ history it gets, and how many messages it may send in one conversation.
 4. Set the **Default rule** to serve **Free Tier** — this is what accounts
    with any other (or no) tier attribute fall through to.
 5. Toggle the flag **On**.
-
-Each account now matches its own plan
 
 Each account now matches its own plan, which is what makes the model menu
 read correctly. Individual targets are evaluated before these rules, so
@@ -612,12 +614,12 @@ latency and judge scores, and its prompt can be tuned or experimented on
 without touching the other models.
 
 1. **Create config** → **Completion** mode, one per model, e.g. Key
-   `nimbus-assistant-coder-30b`. Its **Model ID** must be exactly that
+   `qwen3-coder-30b-a3b-instruct-ud-q4-k-xl`. Its **Model ID** must be exactly that
    model's `id` in `chat-tier-config`. Give it its own system message and
    temperature, set the default rule to serve the variation, and toggle it
    **On**. Judges are optional: a judge runs on the config's own model, so
    judging a large model holds the GPU longer.
-2. In `chat-tier-config`, add `"aiConfigKey": "nimbus-assistant-coder-30b"`
+2. In `chat-tier-config`, add `"aiConfigKey": "qwen3-coder-30b-a3b-instruct-ud-q4-k-xl"`
    to that model's entry in **every** variation that lists it under
    `models`.
 
@@ -684,11 +686,12 @@ difference is the prompt's.
    tokens, latency, feedback and a judge score on a real AI Config tracker,
    through the same SDK calls the app makes. See the script's header.
 
-**Result so far, on synthetic data:** the judge scores `structured-concise`
+**Result, on synthetic data:** the judge scores `structured-concise`
 **+11.76%** more helpful (95% CI +7.44% to +16.09%, significant), and
 positive feedback, the primary metric, reads +10.31% (CI −2.36% to +22.97%,
-not yet significant). It isn't shipped: the primary decides, so the
-experiment keeps running. The full readout, and the two configuration
+not significant). It wasn't shipped: the primary decides, and it hadn't
+cleared zero when the iteration was stopped, so the current prompt serves
+everyone and the judge stays on as monitoring. The full readout, and the two configuration
 mistakes fixed along the way, are in `docs/ARCHITECTURE.md`.
 
 **Try it:** chat as any account. Each reply gets a **Helpful? 👍 👎** row.
